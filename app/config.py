@@ -44,7 +44,6 @@ class Settings(BaseSettings):
     PAYSTACK_SECRET_KEY: str = ""
     PAYSTACK_API_URL: str = "https://api.paystack.co"
     
-   
     # ==================== Daraja (M-Pesa) Configuration ====================
     DARAJA_CONSUMER_KEY: str = ""
     DARAJA_CONSUMER_SECRET: str = ""
@@ -57,8 +56,8 @@ class Settings(BaseSettings):
         "starter": {
             "name": "Starter",
             "description": "Perfect for individuals",
-            "monthly_price": 2900,
-            "yearly_price": 29000,
+            "monthly_price": 6468,
+            "yearly_price": 64680,
             "features": [
                 "Up to 5 properties",
                 "Basic analytics",
@@ -69,8 +68,8 @@ class Settings(BaseSettings):
         "professional": {
             "name": "Professional",
             "description": "For growing agencies",
-            "monthly_price": 9900,
-            "yearly_price": 99000,
+            "monthly_price": 13068,
+            "yearly_price": 130680,
             "features": [
                 "Unlimited properties",
                 "Advanced analytics",
