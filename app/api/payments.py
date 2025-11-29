@@ -10,8 +10,9 @@ from datetime import datetime, timedelta
 
 from app.database import get_db
 from app.models.payment import Payment, Subscription, PaymentStatus, PaymentGateway, PaymentMethod, SubscriptionStatus
-from app.services.payment_gateways import PaystackService, FlutterwaveService
-from app.services.currency_detector import currency_detector, CurrencyExchange
+from app.services.payment_gateways import PaystackService
+from app.services.daraja_service import daraja_service
+from app.services.currency_detector import currency_detector
 from app.schemas.payment import (
     InitiatePaymentRequest,
     InitiatePaymentResponse,
@@ -25,14 +26,12 @@ router = APIRouter(prefix="/api/payments", tags=["payments"])
 
 # Initialize gateway services
 paystack_service = PaystackService(settings.PAYSTACK_SECRET_KEY)
-flutterwave_service = FlutterwaveService(settings.FLUTTERWAVE_SECRET_KEY)
 
 
 @router.post("/detect-gateway", response_model=dict)
 async def detect_gateway(
     request: Request,
-    country_code: Optional[str] = None,
-    phone_number: Optional[str] = None
+    country_code: Optional[str] = None
 ):
     """
     Auto-detect best payment gateway for user
@@ -45,16 +44,13 @@ async def detect_gateway(
         
         # Try detection in order of preference
         if country_code:
-            result = currency_detector.detect_from_country_code(country_code)
-        elif phone_number:
-            result = currency_detector.detect_from_phone(phone_number)
+            result = currency_detector.get_gateway_for_country(country_code)
         else:
             result = await currency_detector.detect_from_ip(client_ip)
         
         return {
             "success": True,
-            "data": result,
-            "available_methods": currency_detector.get_available_methods(result["country_code"])
+            "data": result
         }
     
     except Exception as e:
@@ -64,8 +60,9 @@ async def detect_gateway(
 @router.post("/initiate", response_model=InitiatePaymentResponse)
 async def initiate_payment(
     payload: InitiatePaymentRequest,
-    current_user = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
 ):
     """
     Initiate a payment transaction
@@ -78,7 +75,8 @@ async def initiate_payment(
         
         # Detect gateway if not specified
         if not payload.gateway:
-            detection = await currency_detector.detect_from_ip("0.0.0.0")  # Would be client IP in real scenario
+            client_ip = request.client.host if request.client else "127.0.0.1"
+            detection = await currency_detector.detect_from_ip(client_ip)
             gateway = detection["gateway"]
             currency = detection["currency"]
             method = detection["method"]
@@ -109,7 +107,7 @@ async def initiate_payment(
         db.commit()
         
         # Initialize payment with appropriate gateway
-        if gateway == PaymentGateway.PAYSTACK:
+        if gateway == "paystack":
             # Convert to kobo (smallest unit)
             amount_in_kobo = int(payload.amount * 100)
             
@@ -133,31 +131,6 @@ async def initiate_payment(
                     gateway="paystack",
                     authorization_url=response.get("data", {}).get("authorization_url"),
                     access_code=response.get("data", {}).get("access_code"),
-                    amount=payload.amount,
-                    currency=currency
-                )
-        
-        elif gateway == PaymentGateway.FLUTTERWAVE:
-            response = await flutterwave_service.initialize_payment(
-                amount=payload.amount,
-                currency=currency,
-                email=current_user.email,
-                phone_number=current_user.phone or "0000000000",
-                tx_ref=reference,
-                redirect_url=f"{settings.FRONTEND_URL}/payment/callback",
-                first_name=current_user.first_name,
-                last_name=current_user.last_name,
-                metadata={"plan_id": payload.plan_id}
-            )
-            
-            if response.get("status") == "success":
-                payment_link = response.get("data", {}).get("link")
-                return InitiatePaymentResponse(
-                    success=True,
-                    payment_id=str(payment.id),
-                    reference=reference,
-                    gateway="flutterwave",
-                    authorization_url=payment_link,
                     amount=payload.amount,
                     currency=currency
                 )
@@ -186,39 +159,20 @@ async def verify_payment(
         if payment.user_id != current_user.id:
             raise HTTPException(status_code=403, detail="Unauthorized")
         
-        # Verify with appropriate gateway
-        if payment.gateway == PaymentGateway.PAYSTACK:
-            result = await paystack_service.verify_payment(payload.reference)
-            
-            if result.get("status") and result.get("data", {}).get("status") == "success":
-                payment.status = PaymentStatus.COMPLETED
-                payment.paid_at = datetime.utcnow()
-                db.commit()
-                
-                return {
-                    "success": True,
-                    "status": "success",
-                    "message": "Payment verified successfully",
-                    "payment_id": str(payment.id)
-                }
+        # Verify with Paystack
+        result = await paystack_service.verify_payment(payload.reference)
         
-        elif payment.gateway == PaymentGateway.FLUTTERWAVE:
-            # In real implementation, Flutterwave sends webhook
-            # This is for manual verification
-            transaction_id = payload.gateway_transaction_id
-            result = await flutterwave_service.verify_payment(transaction_id)
+        if result.get("status") and result.get("data", {}).get("status") == "success":
+            payment.status = PaymentStatus.COMPLETED
+            payment.paid_at = datetime.utcnow()
+            db.commit()
             
-            if result.get("status") == "success" and result.get("data", {}).get("status") == "successful":
-                payment.status = PaymentStatus.COMPLETED
-                payment.paid_at = datetime.utcnow()
-                db.commit()
-                
-                return {
-                    "success": True,
-                    "status": "success",
-                    "message": "Payment verified successfully",
-                    "payment_id": str(payment.id)
-                }
+            return {
+                "success": True,
+                "status": "success",
+                "message": "Payment verified successfully",
+                "payment_id": str(payment.id)
+            }
         
         raise HTTPException(status_code=400, detail="Payment verification failed")
     
@@ -229,6 +183,7 @@ async def verify_payment(
 @router.post("/subscribe")
 async def create_subscription(
     payload: SubscriptionRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
@@ -238,7 +193,8 @@ async def create_subscription(
     try:
         # Detect gateway based on user location
         if not payload.gateway:
-            detection = await currency_detector.detect_from_ip("0.0.0.0")
+            client_ip = request.client.host if request.client else "127.0.0.1"
+            detection = await currency_detector.detect_from_ip(client_ip)
             gateway = detection["gateway"]
             currency = detection["currency"]
         else:
@@ -265,7 +221,7 @@ async def create_subscription(
             status=SubscriptionStatus.PENDING,
             currency=currency,
             billing_cycle=payload.billing_cycle,
-            amount=amount / 100,  # Convert to standard units
+            amount=amount / 100,
             gateway=gateway,
             start_date=datetime.utcnow(),
             next_billing_date=datetime.utcnow() + timedelta(days=30 if payload.billing_cycle == "monthly" else 365)
@@ -276,48 +232,27 @@ async def create_subscription(
         
         # Initiate payment for subscription
         reference = f"sub_{uuid.uuid4().hex[:12]}"
+        amount_in_kobo = int(amount)
         
-        if gateway == PaymentGateway.PAYSTACK:
-            amount_in_kobo = int(amount)
-            
-            response = await paystack_service.initialize_payment(
-                amount=amount_in_kobo,
-                email=current_user.email,
-                reference=reference,
-                callback_url=f"{settings.FRONTEND_URL}/subscription/callback",
-                metadata={
-                    "subscription_id": str(subscription.id),
-                    "plan": payload.plan,
-                    "billing_cycle": payload.billing_cycle
-                }
-            )
-            
-            return {
-                "success": True,
+        response = await paystack_service.initialize_payment(
+            amount=amount_in_kobo,
+            email=current_user.email,
+            reference=reference,
+            callback_url=f"{settings.FRONTEND_URL}/subscription/callback",
+            metadata={
                 "subscription_id": str(subscription.id),
-                "reference": reference,
-                "gateway": "paystack",
-                "authorization_url": response.get("data", {}).get("authorization_url")
+                "plan": payload.plan,
+                "billing_cycle": payload.billing_cycle
             }
+        )
         
-        elif gateway == PaymentGateway.FLUTTERWAVE:
-            response = await flutterwave_service.initialize_payment(
-                amount=amount / 100,
-                currency=currency,
-                email=current_user.email,
-                phone_number=current_user.phone or "0000000000",
-                tx_ref=reference,
-                redirect_url=f"{settings.FRONTEND_URL}/subscription/callback",
-                metadata={"subscription_id": str(subscription.id)}
-            )
-            
-            return {
-                "success": True,
-                "subscription_id": str(subscription.id),
-                "reference": reference,
-                "gateway": "flutterwave",
-                "authorization_url": response.get("data", {}).get("link")
-            }
+        return {
+            "success": True,
+            "subscription_id": str(subscription.id),
+            "reference": reference,
+            "gateway": "paystack",
+            "authorization_url": response.get("data", {}).get("authorization_url")
+        }
     
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
