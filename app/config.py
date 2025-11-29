@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     
     # ==================== Database ====================
-    DATABASE_URL: str = "postgresql+psycopg://postgres.thhwkyzttjegjivrqaps:wpVInkXjHoh48On1@aws-1-ap-southeast-2.pooler.supabase.com:5432/postgres"
+    DATABASE_URL: str = "postgresql+psycopg2://postgres.thhwkyzttjegjivrqaps:wpVInkXjHoh48On1@aws-1-ap-southeast-2.pooler.supabase.com:5432/postgres"
     
     # ==================== Security & Authentication ====================
     SECRET_KEY: str = "1fb0f9639cda462bd6bd5e78338e2ceec369784e19e9f917b413b3232457c5e5"
@@ -44,11 +44,13 @@ class Settings(BaseSettings):
     PAYSTACK_SECRET_KEY: str = ""
     PAYSTACK_API_URL: str = "https://api.paystack.co"
     
-    # ==================== Flutterwave Configuration ====================
-    FLUTTERWAVE_PUBLIC_KEY: str = ""
-    FLUTTERWAVE_SECRET_KEY: str = ""
-    FLUTTERWAVE_WEBHOOK_HASH: str = ""
-    FLUTTERWAVE_API_URL: str = "https://api.flutterwave.com/v3"
+   
+    # ==================== Daraja (M-Pesa) Configuration ====================
+    DARAJA_CONSUMER_KEY: str = ""
+    DARAJA_CONSUMER_SECRET: str = ""
+    DARAJA_BUSINESS_SHORTCODE: str = ""
+    DARAJA_PASSKEY: str = ""
+    BACKEND_URL: str = "http://localhost:8000"
     
     # ==================== Payment Plans ====================
     PAYMENT_PLANS: dict = {
