@@ -10,7 +10,6 @@ from enum import Enum
 
 class PaymentGatewayEnum(str, Enum):
     PAYSTACK = "paystack"
-    FLUTTERWAVE = "flutterwave"
 
 
 class PaymentMethodEnum(str, Enum):
