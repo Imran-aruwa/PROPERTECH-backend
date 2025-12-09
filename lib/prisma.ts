@@ -1,7 +1,7 @@
 // ============================================
 // FILE: lib/prisma.ts (UPDATED FOR PRISMA 7)
 // ============================================
-import { PrismaClient } from '@/app/generated/prisma';
+import { PrismaClient } from '@prisma/client';
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;

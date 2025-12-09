@@ -11,7 +11,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-
 // ============================================
 // AUTHENTICATION & USERS
 // ============================================
@@ -40,58 +39,58 @@ enum SubscriptionPlan {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
-  password      String
-  name          String
-  phone         String?
-  role          UserRole  @default(OWNER)
-  
-  subscription  Subscription?
-  
-  ownedProperties     Property[]      @relation("PropertyOwner")
-  agentProperties     Property[]      @relation("PropertyAgent")
-  caretakerProperties Property[]      @relation("PropertyCaretaker")
+  id       String   @id @default(cuid())
+  email    String   @unique
+  password String
+  name     String
+  phone    String?
+  role     UserRole @default(OWNER)
+
+  subscription Subscription?
+
+  ownedProperties     Property[]           @relation("PropertyOwner")
+  agentProperties     Property[]           @relation("PropertyAgent")
+  caretakerProperties Property[]           @relation("PropertyCaretaker")
   tenantLeases        Lease[]
   payments            Payment[]
   maintenanceRequests MaintenanceRequest[]
   incidents           Incident[]
   assignments         Assignment[]
-  
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  lastLoginAt   DateTime?
-  
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  lastLoginAt DateTime?
+
   @@index([email])
   @@index([role])
 }
 
 model Subscription {
-  id            String              @id @default(cuid())
-  userId        String              @unique
-  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  plan          SubscriptionPlan
-  status        SubscriptionStatus  @default(TRIAL)
-  
-  paystackCustomerCode   String?
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  plan   SubscriptionPlan
+  status SubscriptionStatus @default(TRIAL)
+
+  paystackCustomerCode     String?
   paystackSubscriptionCode String?
-  paystackPlanCode       String?
-  
-  amount        Float
-  currency      String           @default("KES")
-  billingCycle  String           @default("monthly")
-  
-  startDate     DateTime         @default(now())
-  endDate       DateTime?
+  paystackPlanCode         String?
+
+  amount       Float
+  currency     String @default("KES")
+  billingCycle String @default("monthly")
+
+  startDate       DateTime  @default(now())
+  endDate         DateTime?
   nextBillingDate DateTime?
-  cancelledAt   DateTime?
-  
-  trialEndsAt   DateTime?
-  
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
-  
+  cancelledAt     DateTime?
+
+  trialEndsAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@index([userId])
   @@index([status])
 }
@@ -104,37 +103,37 @@ enum PropertyType {
 }
 
 model Property {
-  id            String        @id @default(cuid())
-  name          String
-  description   String?
-  type          PropertyType  @default(APARTMENT)
-  
-  address       String
-  city          String
-  county        String?
-  country       String        @default("Kenya")
-  
-  totalUnits    Int
-  floors        Int?
-  yearBuilt     Int?
-  amenities     String[]      @default([])
-  
-  ownerId       String
-  owner         User          @relation("PropertyOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  
-  agentId       String?
-  agent         User?         @relation("PropertyAgent", fields: [agentId], references: [id])
-  
-  caretakerId   String?
-  caretaker     User?         @relation("PropertyCaretaker", fields: [caretakerId], references: [id])
-  
-  units         Unit[]
+  id          String       @id @default(cuid())
+  name        String
+  description String?
+  type        PropertyType @default(APARTMENT)
+
+  address String
+  city    String
+  county  String?
+  country String  @default("Kenya")
+
+  totalUnits Int
+  floors     Int?
+  yearBuilt  Int?
+  amenities  String[] @default([])
+
+  ownerId String
+  owner   User   @relation("PropertyOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  agentId String?
+  agent   User?   @relation("PropertyAgent", fields: [agentId], references: [id])
+
+  caretakerId String?
+  caretaker   User?   @relation("PropertyCaretaker", fields: [caretakerId], references: [id])
+
+  units               Unit[]
   maintenanceRequests MaintenanceRequest[]
-  incidents     Incident[]
-  
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  
+  incidents           Incident[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@index([ownerId])
   @@index([agentId])
 }
@@ -146,58 +145,58 @@ enum UnitStatus {
 }
 
 model Unit {
-  id            String      @id @default(cuid())
-  unitNumber    String
-  
-  propertyId    String
-  property      Property    @relation(fields: [propertyId], references: [id], onDelete: Cascade)
-  
-  bedrooms      Int
-  bathrooms     Float
-  squareFeet    Int?
-  floor         Int?
-  
+  id         String @id @default(cuid())
+  unitNumber String
+
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  bedrooms   Int
+  bathrooms  Float
+  squareFeet Int?
+  floor      Int?
+
   rentAmount    Float
   depositAmount Float?
-  
-  status        UnitStatus  @default(VACANT)
-  
+
+  status UnitStatus @default(VACANT)
+
   leases        Lease[]
   meterReadings MeterReading[]
-  
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
-  
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@unique([propertyId, unitNumber])
   @@index([propertyId])
   @@index([status])
 }
 
 model Lease {
-  id            String      @id @default(cuid())
-  
-  unitId        String
-  unit          Unit        @relation(fields: [unitId], references: [id], onDelete: Cascade)
-  
-  tenantId      String
-  tenant        User        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  
-  startDate     DateTime
-  endDate       DateTime
-  moveInDate    DateTime?
-  moveOutDate   DateTime?
-  
+  id String @id @default(cuid())
+
+  unitId String
+  unit   Unit   @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  tenantId String
+  tenant   User   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  startDate   DateTime
+  endDate     DateTime
+  moveInDate  DateTime?
+  moveOutDate DateTime?
+
   rentAmount    Float
   depositAmount Float
-  depositPaid   Boolean     @default(false)
-  
-  active        Boolean     @default(true)
-  
-  payments      Payment[]
-  
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
-  
+  depositPaid   Boolean @default(false)
+
+  active Boolean @default(true)
+
+  payments Payment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@index([unitId])
   @@index([tenantId])
   @@index([active])
@@ -219,30 +218,30 @@ enum PaymentMethod {
 }
 
 model Payment {
-  id            String          @id @default(cuid())
-  
-  leaseId       String
-  lease         Lease           @relation(fields: [leaseId], references: [id], onDelete: Cascade)
-  
-  tenantId      String
-  tenant        User            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  
-  amount        Float
-  method        PaymentMethod
-  status        PaymentStatus   @default(PENDING)
-  
-  dueDate       DateTime
-  paidDate      DateTime?
-  
-  referenceNumber String?
+  id String @id @default(cuid())
+
+  leaseId String
+  lease   Lease  @relation(fields: [leaseId], references: [id], onDelete: Cascade)
+
+  tenantId String
+  tenant   User   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  amount Float
+  method PaymentMethod
+  status PaymentStatus @default(PENDING)
+
+  dueDate  DateTime
+  paidDate DateTime?
+
+  referenceNumber   String?
   paystackReference String?
-  mpesaCode     String?
-  
-  notes         String?
-  
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-  
+  mpesaCode         String?
+
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@index([leaseId])
   @@index([tenantId])
   @@index([status])
@@ -264,30 +263,30 @@ enum MaintenanceStatus {
 }
 
 model MaintenanceRequest {
-  id            String              @id @default(cuid())
-  
-  propertyId    String
-  property      Property            @relation(fields: [propertyId], references: [id], onDelete: Cascade)
-  
-  reportedById  String
-  reportedBy    User                @relation(fields: [reportedById], references: [id])
-  
-  title         String
-  description   String
-  priority      MaintenancePriority @default(MEDIUM)
-  status        MaintenanceStatus   @default(PENDING)
-  
-  assignedTo    String?
-  
-  reportedAt    DateTime            @default(now())
-  completedAt   DateTime?
-  
+  id String @id @default(cuid())
+
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  reportedById String
+  reportedBy   User   @relation(fields: [reportedById], references: [id])
+
+  title       String
+  description String
+  priority    MaintenancePriority @default(MEDIUM)
+  status      MaintenanceStatus   @default(PENDING)
+
+  assignedTo String?
+
+  reportedAt  DateTime  @default(now())
+  completedAt DateTime?
+
   estimatedCost Float?
   actualCost    Float?
-  
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
-  
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@index([propertyId])
   @@index([reportedById])
   @@index([status])
@@ -301,24 +300,24 @@ enum MeterType {
 }
 
 model MeterReading {
-  id            String      @id @default(cuid())
-  
-  unitId        String
-  unit          Unit        @relation(fields: [unitId], references: [id], onDelete: Cascade)
-  
-  type          MeterType
-  
+  id String @id @default(cuid())
+
+  unitId String
+  unit   Unit   @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  type MeterType
+
   previousReading Float
   currentReading  Float
   consumption     Float
-  
-  ratePerUnit   Float?
-  amount        Float?
-  
-  readingDate   DateTime    @default(now())
-  
-  createdAt     DateTime    @default(now())
-  
+
+  ratePerUnit Float?
+  amount      Float?
+
+  readingDate DateTime @default(now())
+
+  createdAt DateTime @default(now())
+
   @@index([unitId])
   @@index([type])
   @@index([readingDate])
@@ -349,31 +348,31 @@ enum IncidentStatus {
 }
 
 model Incident {
-  id            String            @id @default(cuid())
-  
-  propertyId    String
-  property      Property          @relation(fields: [propertyId], references: [id], onDelete: Cascade)
-  
-  reportedById  String
-  reportedBy    User              @relation(fields: [reportedById], references: [id])
-  
-  type          IncidentType
-  severity      IncidentSeverity  @default(MEDIUM)
-  status        IncidentStatus    @default(REPORTED)
-  
-  title         String
-  description   String
-  location      String
-  
-  occurredAt    DateTime
-  reportedAt    DateTime          @default(now())
-  resolvedAt    DateTime?
-  
-  actionTaken   String?
-  
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
-  
+  id String @id @default(cuid())
+
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  reportedById String
+  reportedBy   User   @relation(fields: [reportedById], references: [id])
+
+  type     IncidentType
+  severity IncidentSeverity @default(MEDIUM)
+  status   IncidentStatus   @default(REPORTED)
+
+  title       String
+  description String
+  location    String
+
+  occurredAt DateTime
+  reportedAt DateTime  @default(now())
+  resolvedAt DateTime?
+
+  actionTaken String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@index([propertyId])
   @@index([reportedById])
   @@index([status])
@@ -397,27 +396,27 @@ enum AssignmentStatus {
 }
 
 model Assignment {
-  id            String            @id @default(cuid())
-  
-  assignedToId  String
-  assignedTo    User              @relation(fields: [assignedToId], references: [id], onDelete: Cascade)
-  
-  type          AssignmentType
-  status        AssignmentStatus  @default(PENDING)
-  
-  title         String
-  description   String?
-  location      String?
-  
+  id String @id @default(cuid())
+
+  assignedToId String
+  assignedTo   User   @relation(fields: [assignedToId], references: [id], onDelete: Cascade)
+
+  type   AssignmentType
+  status AssignmentStatus @default(PENDING)
+
+  title       String
+  description String?
+  location    String?
+
   scheduledDate DateTime
   startedAt     DateTime?
   completedAt   DateTime?
-  
-  notes         String?
-  
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
-  
+
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@index([assignedToId])
   @@index([status])
   @@index([scheduledDate])
@@ -433,20 +432,20 @@ enum DocumentType {
 }
 
 model Document {
-  id            String        @id @default(cuid())
-  
-  name          String
-  type          DocumentType
-  
-  url           String
-  fileSize      Int?
-  mimeType      String?
-  
-  userId        String?
-  propertyId    String?
-  
-  uploadedAt    DateTime      @default(now())
-  
+  id String @id @default(cuid())
+
+  name String
+  type DocumentType
+
+  url      String
+  fileSize Int?
+  mimeType String?
+
+  userId     String?
+  propertyId String?
+
+  uploadedAt DateTime @default(now())
+
   @@index([userId])
   @@index([propertyId])
   @@index([type])
@@ -463,21 +462,21 @@ enum NotificationType {
 }
 
 model Notification {
-  id            String            @id @default(cuid())
-  
-  userId        String
-  
-  type          NotificationType
-  title         String
-  message       String
-  
-  read          Boolean           @default(false)
-  readAt        DateTime?
-  
-  link          String?
-  
-  createdAt     DateTime          @default(now())
-  
+  id String @id @default(cuid())
+
+  userId String
+
+  type    NotificationType
+  title   String
+  message String
+
+  read   Boolean   @default(false)
+  readAt DateTime?
+
+  link String?
+
+  createdAt DateTime @default(now())
+
   @@index([userId])
   @@index([read])
   @@index([createdAt])
