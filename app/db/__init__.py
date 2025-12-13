@@ -1,4 +1,7 @@
-from app.db.base import Base
-from app.db.session import engine, AsyncSessionLocal, get_db
+"""
+Database init - Exports for routes
+"""
+from .session import engine, SessionLocal, get_db, Base
+from .base import Base as ModelBase
 
-__all__ = ["Base", "engine", "AsyncSessionLocal", "get_db"]
+__all__ = ["engine", "SessionLocal", "get_db", "Base", "ModelBase"]

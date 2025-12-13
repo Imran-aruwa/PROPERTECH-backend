@@ -1,23 +1,100 @@
 """
 Security and Authentication
-Integrates Supabase JWT verification with FastAPI
+Handles password hashing, JWT tokens, and user verification
 """
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer
 from starlette.requests import Request
 from sqlalchemy.orm import Session
-import logging
+from passlib.context import CryptContext
+from jose import JWTError, jwt
+from datetime import timedelta, datetime
 from typing import Optional
+import logging
 
 from app.database import get_db
-from app.models.user import User
-from app.services.supabase_service import supabase_service
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 # HTTP Bearer scheme for JWT
 security = HTTPBearer()
 
+# Password hashing context
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+# ============================================================================
+# PASSWORD HASHING FUNCTIONS
+# ============================================================================
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify plain password against hashed password"""
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+def get_password_hash(password: str) -> str:
+    """Hash a password using bcrypt"""
+    return pwd_context.hash(password)
+
+
+# ============================================================================
+# JWT TOKEN FUNCTIONS
+# ============================================================================
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    """
+    Create JWT access token
+    
+    Args:
+        data: Data to encode in token (usually user id, email, role)
+        expires_delta: Token expiration time
+        
+    Returns:
+        Encoded JWT token string
+    """
+    to_encode = data.copy()
+    
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    
+    to_encode.update({"exp": expire})
+    
+    encoded_jwt = jwt.encode(
+        to_encode,
+        settings.SECRET_KEY,
+        algorithm=settings.ALGORITHM
+    )
+    
+    return encoded_jwt
+
+
+def decode_access_token(token: str) -> Optional[dict]:
+    """
+    Decode and verify JWT token
+    
+    Args:
+        token: JWT token string
+        
+    Returns:
+        Decoded token payload or None if invalid
+    """
+    try:
+        payload = jwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM]
+        )
+        return payload
+    except JWTError:
+        return None
+
+
+# ============================================================================
+# USER VERIFICATION DEPENDENCIES
+# ============================================================================
 
 def extract_token(credentials) -> str:
     """Extract token from credentials"""
@@ -29,22 +106,25 @@ def extract_token(credentials) -> str:
 async def get_current_user(
     request: Request,
     db: Session = Depends(get_db)
-) -> User:
+):
     """
     Get current user from JWT token
-
-    Verifies token with Supabase and syncs user to database
-
+    
+    Note: This function needs to import User model locally to avoid circular imports
+    
     Args:
         request: HTTP request
         db: Database session
-
+        
     Returns:
         User object from database
-
+        
     Raises:
         HTTPException: If token is invalid or user not found
     """
+    # Import here to avoid circular import
+    from app.models.user import User
+    
     try:
         # Get token from Authorization header
         auth_header = request.headers.get("Authorization")
@@ -56,21 +136,34 @@ async def get_current_user(
             )
         
         token = auth_header.split(" ")[1]
-
-        # Verify token with Supabase
-        supabase_user = await supabase_service.get_current_user(token)
-
-        if not supabase_user:
+        
+        # Decode token
+        payload = decode_access_token(token)
+        
+        if not payload:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid or expired token"
             )
-
-        # Sync user to database
-        user = supabase_service.sync_user_to_db(db, supabase_user)
-
+        
+        # Get user from database
+        user_id = payload.get("sub")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token payload"
+            )
+        
+        user = db.query(User).filter(User.id == user_id).first()
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found"
+            )
+        
         return user
-
+        
     except HTTPException:
         raise
     except Exception as e:
@@ -84,16 +177,16 @@ async def get_current_user(
 async def get_current_user_optional(
     request: Request,
     db: Session = Depends(get_db)
-) -> Optional[User]:
+):
     """
     Get current user if authenticated, otherwise return None
-
+    
     Useful for endpoints that work with or without auth
-
+    
     Args:
         request: HTTP request
         db: Database session
-
+        
     Returns:
         User object or None
     """
@@ -103,20 +196,20 @@ async def get_current_user_optional(
         return None
 
 
-def verify_admin(user: User = Depends(get_current_user)) -> User:
+def verify_admin(user = Depends(get_current_user)):
     """
     Verify user is admin
-
+    
     Args:
         user: Current user
-
+        
     Returns:
         User if admin
-
+        
     Raises:
         HTTPException: If user is not admin
     """
-    if user.business_type != "admin":
+    if user.role != "admin" and user.business_type != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required"
@@ -124,16 +217,16 @@ def verify_admin(user: User = Depends(get_current_user)) -> User:
     return user
 
 
-def verify_email(user: User = Depends(get_current_user)) -> User:
+def verify_email(user = Depends(get_current_user)):
     """
     Verify user email is confirmed
-
+    
     Args:
         user: Current user
-
+        
     Returns:
         User if email verified
-
+        
     Raises:
         HTTPException: If email not verified
     """
@@ -145,16 +238,16 @@ def verify_email(user: User = Depends(get_current_user)) -> User:
     return user
 
 
-def verify_phone(user: User = Depends(get_current_user)) -> User:
+def verify_phone(user = Depends(get_current_user)):
     """
     Verify user phone is confirmed
-
+    
     Args:
         user: Current user
-
+        
     Returns:
         User if phone verified
-
+        
     Raises:
         HTTPException: If phone not verified
     """
@@ -164,43 +257,3 @@ def verify_phone(user: User = Depends(get_current_user)) -> User:
             detail="Phone verification required"
         )
     return user
-
-
-# Password hashing functions (for auth.py)
-from passlib.context import CryptContext
-from datetime import timedelta, datetime
-from app.config import settings
-from jose import JWTError, jwt
-
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify plain password against hashed password"""
-    return pwd_context.verify(plain_password, hashed_password)
-
-
-def get_password_hash(password: str) -> str:
-    """Hash a password"""
-    return pwd_context.hash(password)
-
-
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    """Create JWT access token"""
-    to_encode = data.copy()
-    
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
-    
-    to_encode.update({"exp": expire})
-    
-    encoded_jwt = jwt.encode(
-        to_encode,
-        settings.SECRET_KEY,
-        algorithm=settings.ALGORITHM
-    )
-    
-    return encoded_jwt
