@@ -10,7 +10,7 @@ from typing import List, Optional
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from app.db.session import get_db
+from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import User, UserRole
 from app.models.staff import Staff, StaffDepartment
