@@ -233,31 +233,31 @@ async def status_check():
 async def startup_event():
     """Run on application startup"""
     logger.info("="*70)
-    logger.info(f"🚀 Starting {settings.PROJECT_NAME} v{settings.VERSION}")
+    logger.info(f"Starting {settings.PROJECT_NAME} v{settings.VERSION}")
     logger.info("="*70)
     logger.info(f"Environment: {'Production' if not settings.DEBUG else 'Development'}")
     logger.info(f"Frontend URL: {settings.FRONTEND_URL}")
     
-    # ✅ FIXED: Test database connection NON-BLOCKING
-    logger.info("🔌 Testing database connection...")
+    # Test database connection NON-BLOCKING
+    logger.info("Testing database connection...")
     try:
         if test_connection():
-            logger.info("✅ Database connection successful!")
+            logger.info("[OK] Database connection successful!")
         else:
-            logger.warning("⚠️  Database connection failed - continuing in degraded mode")
+            logger.warning("[WARN] Database connection failed - continuing in degraded mode")
     except Exception as db_error:
-        logger.warning(f"⚠️  Database test failed: {db_error} - continuing in degraded mode")
-    
-    # ✅ FIXED: Initialize database NON-BLOCKING  
-    logger.info("📋 Initializing database tables...")
+        logger.warning(f"[WARN] Database test failed: {db_error} - continuing in degraded mode")
+
+    # Initialize database NON-BLOCKING
+    logger.info("Initializing database tables...")
     try:
         init_db()
-        logger.info("✅ Database initialization complete!")
+        logger.info("[OK] Database initialization complete!")
     except Exception as init_error:
-        logger.warning(f"⚠️  Database init failed: {init_error} - tables may not exist")
-    
+        logger.warning(f"[WARN] Database init failed: {init_error} - tables may not exist")
+
     logger.info("="*70)
-    logger.info("✅ Application startup complete!")
+    logger.info("[OK] Application startup complete!")
     logger.info("="*70)
 
 
@@ -265,16 +265,16 @@ async def startup_event():
 async def shutdown_event():
     """Run on application shutdown"""
     logger.info("="*70)
-    logger.info("🛑 Shutting down application...")
+    logger.info("Shutting down application...")
     logger.info("="*70)
-    
+
     # Close database connections
     try:
         close_db_connection()
     except:
         pass  # Ignore shutdown errors
-    
-    logger.info("👋 Application shutdown complete")
+
+    logger.info("Application shutdown complete")
 
 
 # ==================== REQUEST LOGGING ====================
@@ -288,16 +288,16 @@ async def log_requests(request: Request, call_next):
         return await call_next(request)
     
     start_time = datetime.utcnow()
-    logger.info(f"📨 {request.method} {request.url.path} - {request.client.host}")
-    
+    logger.info(f">> {request.method} {request.url.path} - {request.client.host}")
+
     try:
         response = await call_next(request)
         duration = (datetime.utcnow() - start_time).total_seconds()
-        logger.info(f"✅ {request.method} {request.url.path} - {response.status_code} ({duration:.2f}s)")
+        logger.info(f"<< {request.method} {request.url.path} - {response.status_code} ({duration:.2f}s)")
         return response
     except Exception as e:
         duration = (datetime.utcnow() - start_time).total_seconds()
-        logger.error(f"❌ {request.method} {request.url.path} - Error: {str(e)} ({duration:.2f}s)")
+        logger.error(f"[ERROR] {request.method} {request.url.path} - Error: {str(e)} ({duration:.2f}s)")
         raise
 
 

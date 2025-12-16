@@ -18,14 +18,14 @@ if IS_RAILWAY:
         os.getenv("DATABASE_PRIVATE_URL") or 
         os.getenv("DATABASE_URL")
     )
-    print("🚀 Running on Railway - using private network connection")
+    print("[RAILWAY] Running on Railway - using private network connection")
 else:
     # Running locally - use SQLite for instant dev
     DATABASE_URL = "sqlite:///propertech_local.db"
-    print("💻 Running locally - using SQLite (instant dev)")
+    print("[LOCAL] Running locally - using SQLite (instant dev)")
 
 if not DATABASE_URL:
-    raise ValueError("❌ DATABASE_URL not found!")
+    raise ValueError("[ERROR] DATABASE_URL not found!")
 
 # ✅ PRODUCTION READY: SYNC engine ONLY (no async issues)
 engine = create_engine(
@@ -68,10 +68,10 @@ def test_connection():
             result = conn.execute(text("SELECT 1"))
             result.fetchone()
             safe_url = DATABASE_URL.split('@')[1] if '@' in DATABASE_URL and not IS_RAILWAY else DATABASE_URL.split('/')[-1]
-            print(f"✅ Database connected: {safe_url}")
+            print(f"[OK] Database connected: {safe_url}")
             return True
     except Exception as e:
-        print(f"⚠️  Database connection failed (continuing): {str(e)}")
+        print(f"[WARN] Database connection failed (continuing): {str(e)}")
         return False  # Continue anyway
 
 def init_db():
@@ -87,16 +87,16 @@ def init_db():
         # from app.models.maintenance import MaintenanceRequest
         
         Base.metadata.create_all(bind=engine)
-        print("✅ Database tables initialized!")
+        print("[OK] Database tables initialized!")
         return True
     except Exception as e:
-        print(f"⚠️  Database init warning: {str(e)}")
+        print(f"[WARN] Database init warning: {str(e)}")
         return False  # Continue anyway
 
 def close_db_connection():
     """Close database connections."""
     try:
         engine.dispose()
-        print("🔌 Database connections closed")
+        print("[OK] Database connections closed")
     except Exception as e:
-        print(f"⚠️  Error closing DB: {str(e)}")
+        print(f"[WARN] Error closing DB: {str(e)}")
