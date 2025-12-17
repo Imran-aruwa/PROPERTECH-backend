@@ -1,16 +1,11 @@
 ﻿from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker, DeclarativeBase
+from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
 import os
 import sys
 
 # Load environment variables from .env file
 load_dotenv()
-
-# Base class for models - exported for backward compatibility
-class Base(DeclarativeBase):
-    """Base class for all SQLAlchemy models."""
-    pass
 
 # Determine if running on Railway (production)
 IS_RAILWAY = os.getenv("RAILWAY_ENVIRONMENT") is not None or os.getenv("RAILWAY_GIT_COMMIT_SHA")
