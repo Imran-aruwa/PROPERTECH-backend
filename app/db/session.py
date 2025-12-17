@@ -1,14 +1,8 @@
 """
-Database session management - unified sync configuration
-
-Local:
-    Uses SQLite (propertech_local.db) for fast development.
-
-Railway:
-    Uses PostgreSQL via DATABASE_URL / DATABASE_PRIVATE_URL
-    configured in the environment and initialized in app.database.
+Database session - Re-exports from app.database for backward compatibility
 """
 
-from app.database import engine, SessionLocal, Base
+# Re-export everything from app.database for backward compatibility
+from app.database import engine, SessionLocal, Base, get_db
 
-__all__ = ["engine", "SessionLocal", "Base"]
+__all__ = ["engine", "SessionLocal", "Base", "get_db"]

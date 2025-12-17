@@ -1,14 +1,13 @@
 """
 Database Base Class and Timestamp Mixin - Production Ready
 """
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import DateTime
 from datetime import datetime, timezone
 import typing
 
-class Base(DeclarativeBase):
-    """Base class for all SQLAlchemy models."""
-    pass
+# Import Base from database.py (single source of truth)
+from app.database import Base
 
 class TimestampMixin:
     """Mixin for automatic created_at/updated_at timestamps."""

@@ -1,11 +1,16 @@
 ﻿from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, DeclarativeBase
 from dotenv import load_dotenv
 import os
 import sys
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Base class for models - exported for backward compatibility
+class Base(DeclarativeBase):
+    """Base class for all SQLAlchemy models."""
+    pass
 
 # Determine if running on Railway (production)
 IS_RAILWAY = os.getenv("RAILWAY_ENVIRONMENT") is not None or os.getenv("RAILWAY_GIT_COMMIT_SHA")
@@ -80,8 +85,7 @@ def test_connection():
 def init_db():
     """Initialize database tables - NON-BLOCKING."""
     try:
-        # Import Base and all models so they're registered
-        from app.db.base import Base
+        # Import all models so they're registered with Base
         from app.models.user import User, UserPreference
         from app.models.tenant import Tenant
         from app.models.payment import Payment, Subscription, Invoice, PaymentGatewayLog

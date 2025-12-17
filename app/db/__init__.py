@@ -2,8 +2,7 @@
 Database init - Exports for routes
 """
 
-from .session import engine, SessionLocal, Base
-from app.database import get_db  # get_db is defined in app.database
-from .base import Base as ModelBase
+from .base import Base, TimestampMixin
+from app.database import engine, SessionLocal, get_db
 
-__all__ = ["engine", "SessionLocal", "get_db", "Base", "ModelBase"]
+__all__ = ["Base", "TimestampMixin", "engine", "SessionLocal", "get_db"]
