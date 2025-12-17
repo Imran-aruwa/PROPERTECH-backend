@@ -42,9 +42,9 @@ app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
     description="Propertech Software - Complete Property Management System with Role-Based Portals",
-    docs_url="/docs" if settings.DEBUG else None,  # Hide docs in production
-    redoc_url="/redoc" if settings.DEBUG else None,
-    openapi_url="/openapi.json" if settings.DEBUG else None
+    docs_url="/api/docs",  # Always enable docs at /api/docs
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json"
 )
 
 
@@ -118,15 +118,15 @@ app.add_middleware(
 # ==================== ROUTERS ====================
 
 
-# Include all API routers with prefixes
-app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
-app.include_router(payments_router, prefix="/payments", tags=["Payments"])
-app.include_router(properties_router, prefix="/properties", tags=["Properties"])
-app.include_router(tenants_router, prefix="/tenants", tags=["Tenants"])
-app.include_router(caretaker_router, prefix="/caretaker", tags=["Caretaker"])
-app.include_router(owner_router, prefix="/owner", tags=["Owner"])
-app.include_router(agent_router, prefix="/agent", tags=["Agent"])
-app.include_router(staff_router, prefix="/staff", tags=["Staff"])
+# Include all API routers with /api prefix
+app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
+app.include_router(payments_router, prefix="/api/payments", tags=["Payments"])
+app.include_router(properties_router, prefix="/api/properties", tags=["Properties"])
+app.include_router(tenants_router, prefix="/api/tenants", tags=["Tenants"])
+app.include_router(caretaker_router, prefix="/api/caretaker", tags=["Caretaker"])
+app.include_router(owner_router, prefix="/api/owner", tags=["Owner"])
+app.include_router(agent_router, prefix="/api/agent", tags=["Agent"])
+app.include_router(staff_router, prefix="/api/staff", tags=["Staff"])
 
 
 # ==================== ERROR HANDLERS ====================

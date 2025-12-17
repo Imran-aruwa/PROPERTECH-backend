@@ -80,6 +80,8 @@ def test_connection():
 def init_db():
     """Initialize database tables - NON-BLOCKING."""
     try:
+        # Import Base from app.db.base (single source of truth)
+        from app.db.base import Base
         # Import all models so they're registered with Base
         from app.models.user import User, UserPreference
         from app.models.tenant import Tenant
