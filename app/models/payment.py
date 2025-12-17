@@ -5,12 +5,11 @@ Database models for payments, subscriptions, invoices, and gateway logs
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from sqlalchemy import Column, String, Integer, Float, DateTime, Boolean, ForeignKey, Text, Enum as SQLEnum
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, Integer, Float, DateTime, Boolean, ForeignKey, Text, Enum as SQLEnum, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import uuid
 
-from app.db.base import Base  # ✅ FIXED: matches your structure
+from app.db.base import Base
 
 class PaymentStatus(str, Enum):
     """Payment status enum"""
@@ -70,10 +69,10 @@ class Payment(Base):
     __tablename__ = "payments"
 
     # Primary key
-    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     
     # User info
-    user_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False)
     user_email: Mapped[str] = mapped_column(String(255), nullable=False)
     user_phone: Mapped[str] = mapped_column(String(20), nullable=True)
     
@@ -92,7 +91,7 @@ class Payment(Base):
     status: Mapped[PaymentStatus] = mapped_column(SQLEnum(PaymentStatus), default=PaymentStatus.PENDING, nullable=False)
     
     # Related to subscription or one-time
-    subscription_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("subscriptions.id"), nullable=True)
+    subscription_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("subscriptions.id"), nullable=True)
     plan_id: Mapped[str] = mapped_column(String(50), nullable=True)
     
     # Location for auto-detection
@@ -119,10 +118,10 @@ class Subscription(Base):
     __tablename__ = "subscriptions"
 
     # Primary key
-    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     
     # User info
-    user_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False)
     
     # Subscription details
     plan: Mapped[SubscriptionPlan] = mapped_column(SQLEnum(SubscriptionPlan), nullable=False)
@@ -165,12 +164,12 @@ class Invoice(Base):
     __tablename__ = "invoices"
 
     # Primary key
-    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     
     # References
-    payment_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("payments.id"), nullable=False)
-    subscription_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("subscriptions.id"), nullable=True)
-    user_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    payment_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("payments.id"), nullable=False)
+    subscription_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("subscriptions.id"), nullable=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False)
     
     # Invoice details
     invoice_number: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
@@ -202,10 +201,10 @@ class PaymentGatewayLog(Base):
     __tablename__ = "payment_gateway_logs"
 
     # Primary key
-    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     
     # References
-    payment_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("payments.id"), nullable=False)
+    payment_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("payments.id"), nullable=False)
     
     # Request/Response
     gateway: Mapped[PaymentGateway] = mapped_column(SQLEnum(PaymentGateway), nullable=False)

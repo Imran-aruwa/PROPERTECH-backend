@@ -5,8 +5,8 @@ Extends Supabase auth_users with custom fields
 from datetime import datetime
 from enum import Enum
 from sqlalchemy import Column, String, DateTime, Boolean, Text, Enum as SQLEnum
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import Uuid
 import uuid
 
 from app.db.base import Base
@@ -30,7 +30,7 @@ class User(Base):
     __tablename__ = "users"
 
     # Primary key - matches Supabase auth.users.id
-    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
     
     # Role field - REQUIRED for dependencies.py
     role: Mapped[UserRole] = mapped_column(SQLEnum(UserRole), default=UserRole.TENANT, index=True)
@@ -77,13 +77,14 @@ class User(Base):
     payments = relationship("Payment", back_populates="user")
     subscriptions = relationship("Subscription", back_populates="user")
     invoices = relationship("Invoice", back_populates="user")
+    tenants = relationship("Tenant", back_populates="user")
 
 class UserPreference(Base):
     """User preferences for notifications and settings"""
     __tablename__ = "user_preferences"
-    
-    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), nullable=False, unique=True, index=True)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True, index=True)
     
     # Email preferences
     email_payment_receipt: Mapped[bool] = mapped_column(Boolean, default=True)

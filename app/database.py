@@ -1,5 +1,4 @@
 ﻿from sqlalchemy import create_engine, text
-from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
 import os
@@ -28,14 +27,18 @@ if not DATABASE_URL:
     raise ValueError("[ERROR] DATABASE_URL not found!")
 
 # ✅ PRODUCTION READY: SYNC engine ONLY (no async issues)
+# Determine connect_args based on database type
+if "sqlite" in DATABASE_URL.lower():
+    connect_args = {"check_same_thread": False}
+elif "postgresql" in DATABASE_URL.lower() or "postgres" in DATABASE_URL.lower():
+    # PostgreSQL - minimal args for Railway compatibility
+    connect_args = {}
+else:
+    connect_args = {}
+
 engine = create_engine(
     DATABASE_URL,
-    connect_args={
-        "check_same_thread": False  # SQLite multi-thread
-    } if "sqlite" in DATABASE_URL.lower() else {
-        "connect_timeout": 10,
-        "options": "-c statement_timeout=30000"  # 30s query timeout
-    },
+    connect_args=connect_args,
     echo=False,
     pool_pre_ping=True,
     pool_size=5 if IS_RAILWAY else 3,
@@ -51,7 +54,7 @@ SessionLocal = sessionmaker(
     bind=engine
 )
 
-Base = declarative_base()
+# Base is imported from app.db.base at the top of this file
 
 def get_db():
     """Dependency for getting database session."""
@@ -77,15 +80,17 @@ def test_connection():
 def init_db():
     """Initialize database tables - NON-BLOCKING."""
     try:
-        # Import all models so they're registered with Base
+        # Import Base and all models so they're registered
+        from app.db.base import Base
         from app.models.user import User, UserPreference
         from app.models.tenant import Tenant
         from app.models.payment import Payment, Subscription, Invoice, PaymentGatewayLog
-        # Add other models as they exist:
-        # from app.models.property import Property
-        # from app.models.unit import Unit
-        # from app.models.maintenance import MaintenanceRequest
-        
+        from app.models.property import Property, Unit
+        from app.models.maintenance import MaintenanceRequest
+        from app.models.staff import Staff
+        from app.models.attendance import Attendance, LeaveRequest, AttendanceSummary
+        from app.models.meter import MeterReading
+
         Base.metadata.create_all(bind=engine)
         print("[OK] Database tables initialized!")
         return True

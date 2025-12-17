@@ -2,8 +2,7 @@
 Tenant Model - Property Management
 """
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, Boolean, Float, Text, ForeignKey, Integer
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, DateTime, Boolean, Float, Text, ForeignKey, Integer, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import uuid
 
@@ -18,12 +17,12 @@ class Tenant(Base):
     __tablename__ = "tenants"
 
     # Primary keys
-    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
-    
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False, index=True)
+
     # Property/Unit relationship
-    property_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
-    unit_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    property_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=True, index=True)
+    unit_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=True, index=True)
     
     # Tenant details
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -59,8 +58,5 @@ class Tenant(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
-    user = relationship("User", back_populates="tenants")
-    payments = relationship("Payment", back_populates="tenant")
-    property = relationship("Property", back_populates="tenants")
-    unit = relationship("Unit", back_populates="tenants")           
+    user = relationship("User", back_populates="tenants")           
     
