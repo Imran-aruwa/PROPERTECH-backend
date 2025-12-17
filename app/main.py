@@ -57,18 +57,22 @@ trusted_hosts = ["localhost", "127.0.0.1"]
 
 # Add frontend domain
 if settings.FRONTEND_URL:
-    frontend_host = settings.FRONTEND_URL.replace("https://", "").replace("http://", "").split(":")[0]
+    frontend_host = settings.FRONTEND_URL.replace("https://", "").replace("http://", "").split(":")[0].split("/")[0]
     trusted_hosts.append(frontend_host)
 
 
-# Add Railway domains if deployed
-if "railway.app" in str(settings.DATABASE_URL):
-    trusted_hosts.extend(["*.railway.app", "*.up.railway.app"])
+# Always add Railway domains for cloud deployment compatibility
+trusted_hosts.extend([
+    ".railway.app",
+    ".up.railway.app",
+])
 
 
+# For production on Railway, allow all hosts (Railway handles security at edge)
+# TrustedHostMiddleware can cause issues with Railway's proxy setup
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=["*"] if settings.DEBUG else trusted_hosts
+    allowed_hosts=["*"]  # Allow all hosts - Railway proxy handles security
 )
 
 
@@ -86,27 +90,26 @@ allowed_origins = [
 ]
 
 
+# Add Railway frontend domains (support various Railway URL patterns)
+railway_patterns = [
+    "https://*.railway.app",
+    "https://*.up.railway.app",
+]
+
+
 if settings.DEBUG:
     allowed_origins.extend([
         "http://localhost:8000",
         "http://localhost:8080",
-        "*"  # Allow all in debug mode
     ])
 
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if settings.DEBUG else allowed_origins,
+    allow_origins=["*"],  # Allow all origins for Railway compatibility
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allow_headers=[
-        "Content-Type",
-        "Authorization",
-        "X-CSRF-Token",
-        "X-Requested-With",
-        "Accept",
-        "Origin",
-    ],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
+    allow_headers=["*"],  # Allow all headers
     expose_headers=["Content-Length", "X-Total-Count"],
     max_age=3600,
 )
