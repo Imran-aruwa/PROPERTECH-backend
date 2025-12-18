@@ -92,11 +92,14 @@ def init_db():
         from app.models.attendance import Attendance, LeaveRequest, AttendanceSummary
         from app.models.meter import MeterReading
 
+        print(f"[INFO] Creating tables for {len(Base.metadata.tables)} models...")
         Base.metadata.create_all(bind=engine)
         print("[OK] Database tables initialized!")
         return True
     except Exception as e:
-        print(f"[WARN] Database init warning: {str(e)}")
+        import traceback
+        print(f"[ERROR] Database init failed: {str(e)}")
+        print(f"[ERROR] Traceback: {traceback.format_exc()}")
         return False  # Continue anyway
 
 def close_db_connection():

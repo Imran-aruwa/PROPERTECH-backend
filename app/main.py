@@ -254,8 +254,10 @@ async def startup_event():
     # Initialize database NON-BLOCKING
     logger.info("Initializing database tables...")
     try:
-        init_db()
-        logger.info("[OK] Database initialization complete!")
+        if init_db():
+            logger.info("[OK] Database initialization complete!")
+        else:
+            logger.warning("[WARN] Database init returned False - tables may not exist")
     except Exception as init_error:
         logger.warning(f"[WARN] Database init failed: {init_error} - tables may not exist")
 
