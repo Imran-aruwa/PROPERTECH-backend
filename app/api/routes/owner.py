@@ -14,8 +14,7 @@ from datetime import datetime, timedelta
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import User, UserRole
-from app.models.property import Property
-from app.models.unit import Unit
+from app.models.property import Property, Unit
 from app.models.tenant import Tenant
 from app.models.payment import Payment, PaymentStatus, PaymentType
 from app.models.maintenance import MaintenanceRequest, MaintenanceStatus

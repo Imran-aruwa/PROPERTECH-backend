@@ -12,8 +12,7 @@ from uuid import UUID
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import User, UserRole
-from app.models.property import Property
-from app.models.unit import Unit
+from app.models.property import Property, Unit
 from app.models.tenant import Tenant
 from app.models.meter import MeterReading
 from app.models.payment import Payment, PaymentStatus, PaymentType
