@@ -1,7 +1,8 @@
-from sqlalchemy import Column, String, Integer, ForeignKey, Text, Enum as SQLEnum
+from sqlalchemy import Column, String, ForeignKey, Text, Enum as SQLEnum, Uuid
 from sqlalchemy.orm import relationship
 from app.db.base import Base, TimestampMixin
 from enum import Enum
+import uuid
 
 class MaintenanceStatus(str, Enum):
     PENDING = "pending"
@@ -17,9 +18,11 @@ class MaintenancePriority(str, Enum):
 
 class MaintenanceRequest(Base, TimestampMixin):
     __tablename__ = "maintenance_requests"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4, index=True)
+    tenant_id = Column(Uuid, ForeignKey("tenants.id"), nullable=False)
+    property_id = Column(Uuid, ForeignKey("properties.id"), nullable=True)
+    unit_id = Column(Uuid, ForeignKey("units.id"), nullable=True)
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=False)
     priority = Column(SQLEnum(MaintenancePriority), default=MaintenancePriority.MEDIUM)

@@ -11,15 +11,16 @@ Used with:
 """
 
 from enum import Enum
+import uuid
 
 from sqlalchemy import (
     Column,
     Date,
     Float,
     ForeignKey,
-    Integer,
     String,
     Enum as SQLEnum,
+    Uuid,
 )
 from sqlalchemy.orm import relationship
 
@@ -36,12 +37,12 @@ class Staff(Base, TimestampMixin):
     __tablename__ = "staff"
 
     # Primary key
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4, index=True)
 
     # Foreign keys
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    property_id = Column(Integer, ForeignKey("properties.id"), nullable=False)
-    supervisor_id = Column(Integer, ForeignKey("staff.id"), nullable=True)
+    user_id = Column(Uuid, ForeignKey("users.id"), nullable=False)
+    property_id = Column(Uuid, ForeignKey("properties.id"), nullable=False)
+    supervisor_id = Column(Uuid, ForeignKey("staff.id"), nullable=True)
 
     # Staff details
     department = Column(SQLEnum(StaffDepartment), nullable=False)
@@ -79,4 +80,3 @@ class Staff(Base, TimestampMixin):
             f"<Staff id={self.id} user_id={self.user_id} "
             f"dept={self.department} position={self.position}>"
         )
-        

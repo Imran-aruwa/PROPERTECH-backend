@@ -91,6 +91,9 @@ def init_db():
         from app.models.staff import Staff
         from app.models.attendance import Attendance, LeaveRequest, AttendanceSummary
         from app.models.meter import MeterReading
+        from app.models.incident import Incident
+        from app.models.equipment import Equipment
+        from app.models.task import Task
 
         print(f"[INFO] Creating tables for {len(Base.metadata.tables)} models...")
         Base.metadata.create_all(bind=engine)

@@ -16,6 +16,7 @@ from app.database import DATABASE_URL
 
 # Import ALL models to register them with Base.metadata
 from app.models import user, tenant, payment, property, maintenance, staff, attendance, meter
+from app.models import incident, equipment, task
 
 # this is the Alembic Config object
 config = context.config

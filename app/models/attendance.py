@@ -10,6 +10,7 @@ Used by: Head Security, Head Gardener, Security Guards, Gardeners, Caretaker
 """
 
 from datetime import datetime
+import uuid
 
 from sqlalchemy import (
     Boolean,
@@ -20,6 +21,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Uuid,
 )
 from sqlalchemy.orm import relationship
 
@@ -42,10 +44,10 @@ class Attendance(Base, TimestampMixin):
     __tablename__ = "attendance"
 
     # Primary Key
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4, index=True)
 
     # Foreign Keys
-    staff_id = Column(Integer, ForeignKey("staff.id"), nullable=False, index=True)
+    staff_id = Column(Uuid, ForeignKey("staff.id"), nullable=False, index=True)
 
     # Date Information
     date = Column(Date, nullable=False, index=True)
@@ -157,20 +159,20 @@ class Attendance(Base, TimestampMixin):
     def get_status_badge(self) -> str:
         """Return a simple status label for UI display."""
         if self.status == "present":
-            return "✅ Present"
+            return "Present"
         if self.status == "absent":
-            return "❌ Absent"
+            return "Absent"
         if self.status == "on-leave":
-            return "📅 On Leave"
+            return "On Leave"
         if self.status == "sick":
-            return "🤒 Sick Leave"
-        return "❓ Unknown"
+            return "Sick Leave"
+        return "Unknown"
 
     def to_dict(self) -> dict:
         """Serialize attendance record to a dict for JSON responses."""
         return {
-            "id": self.id,
-            "staff_id": self.staff_id,
+            "id": str(self.id),
+            "staff_id": str(self.staff_id),
             "date": self.display_date,
             "check_in": self.display_check_in,
             "check_out": self.display_check_out,
@@ -195,10 +197,10 @@ class LeaveRequest(Base, TimestampMixin):
     __tablename__ = "leave_requests"
 
     # Primary Key
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4, index=True)
 
     # Foreign Keys
-    staff_id = Column(Integer, ForeignKey("staff.id"), nullable=False, index=True)
+    staff_id = Column(Uuid, ForeignKey("staff.id"), nullable=False, index=True)
 
     # Leave Details
     leave_type = Column(String(50), nullable=False)  # sick, annual, emergency, unpaid
@@ -230,13 +232,13 @@ class AttendanceSummary(Base, TimestampMixin):
     __tablename__ = "attendance_summary"
 
     # Primary Key
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4, index=True)
 
     # Foreign Keys
-    staff_id = Column(Integer, ForeignKey("staff.id"), nullable=False, index=True)
+    staff_id = Column(Uuid, ForeignKey("staff.id"), nullable=False, index=True)
 
     # Period
-    month = Column(Integer, nullable=False)  # 1–12
+    month = Column(Integer, nullable=False)  # 1-12
     year = Column(Integer, nullable=False)
 
     # Day counts
@@ -259,7 +261,7 @@ class AttendanceSummary(Base, TimestampMixin):
     punctuality_rate = Column(Float, nullable=True, default=0.0)
 
     # Performance
-    performance_score = Column(Float, nullable=True, default=0.0)  # 0–100
+    performance_score = Column(Float, nullable=True, default=0.0)  # 0-100
     performance_notes = Column(String(500), nullable=True)
 
     # Relationships
@@ -267,4 +269,3 @@ class AttendanceSummary(Base, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<AttendanceSummary staff_id={self.staff_id} {self.year}-{self.month:02d}>"
-
