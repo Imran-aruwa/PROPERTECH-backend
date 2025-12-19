@@ -1,8 +1,8 @@
-"""Create all tables
+"""Create all tables with UUID keys
 
-Revision ID: c635203c8238
+Revision ID: 2ee80e442254
 Revises: 
-Create Date: 2025-12-19 08:10:13.435911
+Create Date: 2025-12-19 08:54:34.744191
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'c635203c8238'
+revision: str = '2ee80e442254'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -138,35 +138,6 @@ def upgrade() -> None:
     op.create_index(op.f('ix_tenants_status'), 'tenants', ['status'], unique=False)
     op.create_index(op.f('ix_tenants_unit_id'), 'tenants', ['unit_id'], unique=False)
     op.create_index(op.f('ix_tenants_user_id'), 'tenants', ['user_id'], unique=False)
-    op.create_table('equipment',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('property_id', sa.Integer(), nullable=False),
-    sa.Column('name', sa.String(length=255), nullable=False),
-    sa.Column('type', sa.String(length=100), nullable=False),
-    sa.Column('description', sa.Text(), nullable=True),
-    sa.Column('status', sa.String(length=50), nullable=True),
-    sa.Column('last_maintenance', sa.String(length=255), nullable=True),
-    sa.Column('notes', sa.Text(), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
-    sa.ForeignKeyConstraint(['property_id'], ['properties.id'], ),
-    sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index(op.f('ix_equipment_id'), 'equipment', ['id'], unique=False)
-    op.create_table('maintenance_requests',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('tenant_id', sa.Integer(), nullable=False),
-    sa.Column('title', sa.String(length=255), nullable=False),
-    sa.Column('description', sa.Text(), nullable=False),
-    sa.Column('priority', sa.Enum('LOW', 'MEDIUM', 'HIGH', 'EMERGENCY', name='maintenancepriority'), nullable=True),
-    sa.Column('status', sa.Enum('PENDING', 'IN_PROGRESS', 'COMPLETED', 'REJECTED', name='maintenancestatus'), nullable=True),
-    sa.Column('notes', sa.Text(), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
-    sa.ForeignKeyConstraint(['tenant_id'], ['tenants.id'], ),
-    sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index(op.f('ix_maintenance_requests_id'), 'maintenance_requests', ['id'], unique=False)
     op.create_table('payments',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('user_id', sa.Uuid(), nullable=False),
@@ -195,10 +166,10 @@ def upgrade() -> None:
     sa.UniqueConstraint('reference')
     )
     op.create_table('staff',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('user_id', sa.Integer(), nullable=False),
-    sa.Column('property_id', sa.Integer(), nullable=False),
-    sa.Column('supervisor_id', sa.Integer(), nullable=True),
+    sa.Column('id', sa.Uuid(), nullable=False),
+    sa.Column('user_id', sa.Uuid(), nullable=False),
+    sa.Column('property_id', sa.Uuid(), nullable=False),
+    sa.Column('supervisor_id', sa.Uuid(), nullable=True),
     sa.Column('department', sa.Enum('SECURITY', 'GARDENING', 'MAINTENANCE', name='staffdepartment'), nullable=False),
     sa.Column('position', sa.String(length=100), nullable=False),
     sa.Column('salary', sa.Float(), nullable=False),
@@ -226,8 +197,8 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_table('attendance',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('staff_id', sa.Integer(), nullable=False),
+    sa.Column('id', sa.Uuid(), nullable=False),
+    sa.Column('staff_id', sa.Uuid(), nullable=False),
     sa.Column('date', sa.Date(), nullable=False),
     sa.Column('check_in_time', sa.DateTime(), nullable=True),
     sa.Column('check_out_time', sa.DateTime(), nullable=True),
@@ -247,8 +218,8 @@ def upgrade() -> None:
     op.create_index(op.f('ix_attendance_id'), 'attendance', ['id'], unique=False)
     op.create_index(op.f('ix_attendance_staff_id'), 'attendance', ['staff_id'], unique=False)
     op.create_table('attendance_summary',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('staff_id', sa.Integer(), nullable=False),
+    sa.Column('id', sa.Uuid(), nullable=False),
+    sa.Column('staff_id', sa.Uuid(), nullable=False),
     sa.Column('month', sa.Integer(), nullable=False),
     sa.Column('year', sa.Integer(), nullable=False),
     sa.Column('total_days', sa.Integer(), nullable=False),
@@ -271,10 +242,28 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_attendance_summary_id'), 'attendance_summary', ['id'], unique=False)
     op.create_index(op.f('ix_attendance_summary_staff_id'), 'attendance_summary', ['staff_id'], unique=False)
+    op.create_table('equipment',
+    sa.Column('id', sa.Uuid(), nullable=False),
+    sa.Column('property_id', sa.Uuid(), nullable=False),
+    sa.Column('unit_id', sa.Uuid(), nullable=True),
+    sa.Column('name', sa.String(length=255), nullable=False),
+    sa.Column('type', sa.String(length=100), nullable=False),
+    sa.Column('description', sa.Text(), nullable=True),
+    sa.Column('status', sa.String(length=50), nullable=True),
+    sa.Column('last_maintenance', sa.String(length=255), nullable=True),
+    sa.Column('notes', sa.Text(), nullable=True),
+    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
+    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
+    sa.ForeignKeyConstraint(['property_id'], ['properties.id'], ),
+    sa.ForeignKeyConstraint(['unit_id'], ['units.id'], ),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_equipment_id'), 'equipment', ['id'], unique=False)
     op.create_table('incidents',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('staff_id', sa.Integer(), nullable=False),
-    sa.Column('property_id', sa.Integer(), nullable=False),
+    sa.Column('id', sa.Uuid(), nullable=False),
+    sa.Column('staff_id', sa.Uuid(), nullable=False),
+    sa.Column('property_id', sa.Uuid(), nullable=False),
+    sa.Column('unit_id', sa.Uuid(), nullable=True),
     sa.Column('title', sa.String(length=255), nullable=False),
     sa.Column('description', sa.Text(), nullable=False),
     sa.Column('severity', sa.Enum('LOW', 'MEDIUM', 'HIGH', 'CRITICAL', name='incidentseverity'), nullable=True),
@@ -284,6 +273,7 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
     sa.ForeignKeyConstraint(['property_id'], ['properties.id'], ),
     sa.ForeignKeyConstraint(['staff_id'], ['staff.id'], ),
+    sa.ForeignKeyConstraint(['unit_id'], ['units.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_incidents_id'), 'incidents', ['id'], unique=False)
@@ -310,8 +300,8 @@ def upgrade() -> None:
     sa.UniqueConstraint('invoice_number')
     )
     op.create_table('leave_requests',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('staff_id', sa.Integer(), nullable=False),
+    sa.Column('id', sa.Uuid(), nullable=False),
+    sa.Column('staff_id', sa.Uuid(), nullable=False),
     sa.Column('leave_type', sa.String(length=50), nullable=False),
     sa.Column('start_date', sa.Date(), nullable=False),
     sa.Column('end_date', sa.Date(), nullable=False),
@@ -328,9 +318,28 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_leave_requests_id'), 'leave_requests', ['id'], unique=False)
     op.create_index(op.f('ix_leave_requests_staff_id'), 'leave_requests', ['staff_id'], unique=False)
+    op.create_table('maintenance_requests',
+    sa.Column('id', sa.Uuid(), nullable=False),
+    sa.Column('tenant_id', sa.Uuid(), nullable=False),
+    sa.Column('property_id', sa.Uuid(), nullable=True),
+    sa.Column('unit_id', sa.Uuid(), nullable=True),
+    sa.Column('title', sa.String(length=255), nullable=False),
+    sa.Column('description', sa.Text(), nullable=False),
+    sa.Column('priority', sa.Enum('LOW', 'MEDIUM', 'HIGH', 'EMERGENCY', name='maintenancepriority'), nullable=True),
+    sa.Column('status', sa.Enum('PENDING', 'IN_PROGRESS', 'COMPLETED', 'REJECTED', name='maintenancestatus'), nullable=True),
+    sa.Column('notes', sa.Text(), nullable=True),
+    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
+    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
+    sa.ForeignKeyConstraint(['property_id'], ['properties.id'], ),
+    sa.ForeignKeyConstraint(['tenant_id'], ['tenants.id'], ),
+    sa.ForeignKeyConstraint(['unit_id'], ['units.id'], ),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_maintenance_requests_id'), 'maintenance_requests', ['id'], unique=False)
     op.create_table('meter_readings',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('unit_id', sa.Integer(), nullable=False),
+    sa.Column('id', sa.Uuid(), nullable=False),
+    sa.Column('unit_id', sa.Uuid(), nullable=False),
+    sa.Column('property_id', sa.Uuid(), nullable=True),
     sa.Column('reading_date', sa.DateTime(), nullable=False),
     sa.Column('water_reading', sa.Float(), nullable=True),
     sa.Column('electricity_reading', sa.Float(), nullable=True),
@@ -338,6 +347,7 @@ def upgrade() -> None:
     sa.Column('notes', sa.String(length=500), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
+    sa.ForeignKeyConstraint(['property_id'], ['properties.id'], ),
     sa.ForeignKeyConstraint(['unit_id'], ['units.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
@@ -356,9 +366,10 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_table('tasks',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('assigned_to', sa.Integer(), nullable=False),
-    sa.Column('property_id', sa.Integer(), nullable=False),
+    sa.Column('id', sa.Uuid(), nullable=False),
+    sa.Column('assigned_to', sa.Uuid(), nullable=False),
+    sa.Column('property_id', sa.Uuid(), nullable=False),
+    sa.Column('unit_id', sa.Uuid(), nullable=True),
     sa.Column('title', sa.String(length=255), nullable=False),
     sa.Column('description', sa.Text(), nullable=False),
     sa.Column('status', sa.Enum('PENDING', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', name='taskstatus'), nullable=True),
@@ -368,6 +379,7 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
     sa.ForeignKeyConstraint(['assigned_to'], ['staff.id'], ),
     sa.ForeignKeyConstraint(['property_id'], ['properties.id'], ),
+    sa.ForeignKeyConstraint(['unit_id'], ['units.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_tasks_id'), 'tasks', ['id'], unique=False)
@@ -381,12 +393,16 @@ def downgrade() -> None:
     op.drop_table('payment_gateway_logs')
     op.drop_index(op.f('ix_meter_readings_id'), table_name='meter_readings')
     op.drop_table('meter_readings')
+    op.drop_index(op.f('ix_maintenance_requests_id'), table_name='maintenance_requests')
+    op.drop_table('maintenance_requests')
     op.drop_index(op.f('ix_leave_requests_staff_id'), table_name='leave_requests')
     op.drop_index(op.f('ix_leave_requests_id'), table_name='leave_requests')
     op.drop_table('leave_requests')
     op.drop_table('invoices')
     op.drop_index(op.f('ix_incidents_id'), table_name='incidents')
     op.drop_table('incidents')
+    op.drop_index(op.f('ix_equipment_id'), table_name='equipment')
+    op.drop_table('equipment')
     op.drop_index(op.f('ix_attendance_summary_staff_id'), table_name='attendance_summary')
     op.drop_index(op.f('ix_attendance_summary_id'), table_name='attendance_summary')
     op.drop_table('attendance_summary')
@@ -398,10 +414,6 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_staff_id'), table_name='staff')
     op.drop_table('staff')
     op.drop_table('payments')
-    op.drop_index(op.f('ix_maintenance_requests_id'), table_name='maintenance_requests')
-    op.drop_table('maintenance_requests')
-    op.drop_index(op.f('ix_equipment_id'), table_name='equipment')
-    op.drop_table('equipment')
     op.drop_index(op.f('ix_tenants_user_id'), table_name='tenants')
     op.drop_index(op.f('ix_tenants_unit_id'), table_name='tenants')
     op.drop_index(op.f('ix_tenants_status'), table_name='tenants')
