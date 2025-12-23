@@ -21,7 +21,7 @@ from app.models.maintenance import MaintenanceRequest, MaintenanceStatus
 from app.models.meter import MeterReading
 from app.models.staff import Staff
 
-router = APIRouter(, tags=["owner"])
+router = APIRouter(tags=["owner"])
 
 
 @router.get("/dashboard")
@@ -374,7 +374,7 @@ Agent Portal Routes - Complete Implementation
 Property management, commission tracking, earnings analytics, meter readings
 """
 
-agent_router = APIRouter(, tags=["agent"])
+agent_router = APIRouter(tags=["agent"])
 
 
 @agent_router.get("/dashboard")
