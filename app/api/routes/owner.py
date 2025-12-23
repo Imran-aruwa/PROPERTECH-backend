@@ -129,6 +129,7 @@ def get_owner_dashboard(
     }
 
 
+@router.get("/analytics")
 @router.get("/financial-analytics")
 def get_financial_analytics(
     current_user: User = Depends(get_current_user),

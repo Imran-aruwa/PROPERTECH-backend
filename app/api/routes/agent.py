@@ -4,7 +4,7 @@ from app.database import get_db
 from app.models.user import User, UserRole
 from app.dependencies import get_current_user, require_role
 
-router = APIRouter(prefix="/agent", tags=["agent"])
+router = APIRouter(tags=["agent"])
 
 @router.get("/dashboard")
 async def agent_dashboard(current_user: User = Depends(require_role(UserRole.AGENT)), db: AsyncSession = Depends(get_db)):

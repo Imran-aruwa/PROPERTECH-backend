@@ -18,7 +18,7 @@ from app.models.incident import Incident, IncidentSeverity
 from app.models.task import Task, TaskStatus
 from app.models.maintenance import MaintenanceRequest
 
-router = APIRouter(prefix="/staff", tags=["staff"])
+router = APIRouter(tags=["staff"])
 
 
 # ==================== ATTENDANCE ====================

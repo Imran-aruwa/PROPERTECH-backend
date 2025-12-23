@@ -22,7 +22,7 @@ from app.schemas.tenant import (
     MaintenanceRequestCreate
 )
 
-router = APIRouter(prefix="/tenants", tags=["tenants"])
+router = APIRouter(tags=["tenants"])
 
 
 # ==================== TENANT CRUD ====================

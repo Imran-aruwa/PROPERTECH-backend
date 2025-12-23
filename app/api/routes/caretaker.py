@@ -19,7 +19,7 @@ from app.models.payment import Payment, PaymentStatus, PaymentType
 from app.models.maintenance import MaintenanceRequest, MaintenanceStatus, MaintenancePriority
 from app.schemas.meter import MeterReadingCreate, MeterReadingResponse
 
-router = APIRouter(prefix="/caretaker", tags=["caretaker"])
+router = APIRouter(tags=["caretaker"])
 
 
 # ==================== CARETAKER DASHBOARD ====================
