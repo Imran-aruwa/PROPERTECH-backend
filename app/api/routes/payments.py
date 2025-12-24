@@ -20,7 +20,7 @@ from app.schemas.payment import (
 from app.core.config import settings
 from app.core.security import get_current_user
 
-router = APIRouter(prefix="/api/payments", tags=["payments"])
+router = APIRouter(tags=["payments"])
 
 PAYSTACK_BASE_URL = "https://api.paystack.co"
 PAYSTACK_SECRET_KEY = settings.PAYSTACK_SECRET_KEY

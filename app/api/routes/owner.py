@@ -1,6 +1,3 @@
-# =====================================================
-# FILE 1: app/api/routes/owner.py (COMPLETE)
-# =====================================================
 """
 Owner Portal Routes - Complete Implementation
 Financial analytics, staff management, property oversight, commission tracking
@@ -32,9 +29,9 @@ def get_owner_dashboard(
     """Get owner dashboard with all key metrics"""
     if current_user.role != UserRole.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
+
     properties = db.query(Property).filter(Property.owner_id == current_user.id).all()
-    
+
     if not properties:
         return {
             "success": True,
@@ -42,25 +39,25 @@ def get_owner_dashboard(
             "units": 0,
             "metrics": {}
         }
-    
+
     property_ids = [p.id for p in properties]
-    
+
     # Unit metrics
     total_units = db.query(Unit).filter(Unit.property_id.in_(property_ids)).count()
     occupied_units = db.query(Unit).filter(
         and_(Unit.property_id.in_(property_ids), Unit.is_occupied == True)
     ).count()
     occupancy_rate = (occupied_units / total_units * 100) if total_units > 0 else 0
-    
+
     # Revenue metrics
     today = datetime.utcnow().date()
     current_month_start = datetime(today.year, today.month, 1).date()
     current_month_end = datetime(today.year, today.month + 1 if today.month < 12 else 1, 1).date() - timedelta(days=1)
-    
+
     expected_rent = db.query(func.sum(Unit.monthly_rent))\
         .filter(and_(Unit.property_id.in_(property_ids), Unit.is_occupied == True))\
         .scalar() or 0
-    
+
     collected_rent = db.query(func.sum(Payment.amount))\
         .filter(
             and_(
@@ -70,7 +67,7 @@ def get_owner_dashboard(
                 Payment.payment_date <= current_month_end
             )
         ).scalar() or 0
-    
+
     water_collected = db.query(func.sum(Payment.amount))\
         .filter(
             and_(
@@ -80,7 +77,7 @@ def get_owner_dashboard(
                 Payment.payment_date <= current_month_end
             )
         ).scalar() or 0
-    
+
     electricity_collected = db.query(func.sum(Payment.amount))\
         .filter(
             and_(
@@ -90,18 +87,18 @@ def get_owner_dashboard(
                 Payment.payment_date <= current_month_end
             )
         ).scalar() or 0
-    
+
     total_revenue = float(collected_rent + water_collected + electricity_collected)
     collection_rate = (collected_rent / expected_rent * 100) if expected_rent > 0 else 0
-    
+
     # Staff metrics
     total_staff = db.query(Staff).count()
-    
+
     # Maintenance metrics
     total_maintenance = db.query(MaintenanceRequest).count()
     pending_maintenance = db.query(MaintenanceRequest)\
         .filter(MaintenanceRequest.status == MaintenanceStatus.PENDING).count()
-    
+
     return {
         "success": True,
         "properties": len(properties),
@@ -139,14 +136,14 @@ def get_financial_analytics(
     """Get comprehensive financial analytics"""
     if current_user.role != UserRole.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
+
     properties = db.query(Property).filter(Property.owner_id == current_user.id).all()
     property_ids = [p.id for p in properties]
-    
+
     # Generate monthly data
     monthly_data = []
     today = datetime.utcnow().date()
-    
+
     for i in range(months):
         month_date = today - timedelta(days=30*i)
         month_start = datetime(month_date.year, month_date.month, 1).date()
@@ -154,12 +151,12 @@ def get_financial_analytics(
             month_end = datetime(month_date.year + 1, 1, 1).date() - timedelta(days=1)
         else:
             month_end = datetime(month_date.year, month_date.month + 1, 1).date() - timedelta(days=1)
-        
+
         # Calculate metrics for this month
         expected = db.query(func.sum(Unit.monthly_rent))\
             .filter(and_(Unit.property_id.in_(property_ids), Unit.is_occupied == True))\
             .scalar() or 0
-        
+
         collected = db.query(func.sum(Payment.amount))\
             .filter(
                 and_(
@@ -169,17 +166,17 @@ def get_financial_analytics(
                     Payment.payment_date <= month_end
                 )
             ).scalar() or 0
-        
+
         monthly_data.append({
             "month": f"{month_date.year}-{month_date.month:02d}",
             "expected_rent": float(expected),
             "collected_rent": float(collected),
             "collection_rate": round((collected / expected * 100) if expected > 0 else 0, 2)
         })
-    
+
     return {
         "success": True,
-        "owner_id": current_user.id,
+        "owner_id": str(current_user.id),
         "properties": len(properties),
         "monthly_analytics": monthly_data
     }
@@ -193,18 +190,18 @@ def get_owner_properties(
     """Get all properties owned by current user"""
     if current_user.role != UserRole.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
+
     properties = db.query(Property).filter(Property.owner_id == current_user.id).all()
-    
+
     property_list = []
     for prop in properties:
         units = db.query(Unit).filter(Unit.property_id == prop.id).count()
         occupied = db.query(Unit).filter(
             and_(Unit.property_id == prop.id, Unit.is_occupied == True)
         ).count()
-        
+
         property_list.append({
-            "id": prop.id,
+            "id": str(prop.id),
             "name": prop.name,
             "address": prop.address,
             "city": prop.city,
@@ -212,7 +209,7 @@ def get_owner_properties(
             "occupied_units": occupied,
             "occupancy_rate": round((occupied / units * 100) if units > 0 else 0, 2)
         })
-    
+
     return {
         "success": True,
         "total_properties": len(properties),
@@ -228,22 +225,22 @@ def get_all_staff(
     """Get all staff across all properties"""
     if current_user.role != UserRole.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
+
     staff = db.query(Staff).all()
-    
+
     staff_list = [
         {
-            "id": s.id,
+            "id": str(s.id),
             "name": s.user.full_name if s.user else "Unknown",
             "email": s.user.email if s.user else "N/A",
             "position": s.position,
             "department": s.department,
-            "salary": s.salary,
+            "salary": float(s.salary) if s.salary else 0,
             "start_date": s.start_date.isoformat() if s.start_date else None
         }
         for s in staff
     ]
-    
+
     return {
         "success": True,
         "total_staff": len(staff),
@@ -259,11 +256,11 @@ def get_agent_commissions(
     """Get agent commission tracking and payout history"""
     if current_user.role != UserRole.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
+
     today = datetime.utcnow().date()
     current_month_start = datetime(today.year, today.month, 1).date()
     current_month_end = datetime(today.year, today.month + 1 if today.month < 12 else 1, 1).date() - timedelta(days=1)
-    
+
     # Calculate commissions (5% rent, 2% water, 2% electricity)
     rent_commissions = db.query(func.sum(Payment.amount * 0.05))\
         .filter(
@@ -274,7 +271,7 @@ def get_agent_commissions(
                 Payment.payment_date <= current_month_end
             )
         ).scalar() or 0
-    
+
     water_commissions = db.query(func.sum(Payment.amount * 0.02))\
         .filter(
             and_(
@@ -284,7 +281,7 @@ def get_agent_commissions(
                 Payment.payment_date <= current_month_end
             )
         ).scalar() or 0
-    
+
     electricity_commissions = db.query(func.sum(Payment.amount * 0.02))\
         .filter(
             and_(
@@ -294,9 +291,9 @@ def get_agent_commissions(
                 Payment.payment_date <= current_month_end
             )
         ).scalar() or 0
-    
+
     total_commissions = rent_commissions + water_commissions + electricity_commissions
-    
+
     return {
         "success": True,
         "period": f"{current_month_start} to {current_month_end}",
@@ -324,30 +321,30 @@ def generate_monthly_report(
     """Generate comprehensive monthly report"""
     if current_user.role != UserRole.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
+
     if not month:
         month = datetime.utcnow().month
     if not year:
         year = datetime.utcnow().year
-    
+
     month_start = datetime(year, month, 1).date()
     month_end = datetime(year, month + 1 if month < 12 else 1, 1).date() - timedelta(days=1)
-    
+
     properties = db.query(Property).filter(Property.owner_id == current_user.id).all()
     property_ids = [p.id for p in properties]
-    
+
     report = {
         "success": True,
         "owner": current_user.full_name,
         "period": f"{month_start} to {month_end}",
         "generated_at": datetime.utcnow().isoformat()
     }
-    
+
     # Add financial summary
     expected_rent = db.query(func.sum(Unit.monthly_rent))\
         .filter(and_(Unit.property_id.in_(property_ids), Unit.is_occupied == True))\
         .scalar() or 0
-    
+
     collected_rent = db.query(func.sum(Payment.amount))\
         .filter(
             and_(
@@ -357,274 +354,11 @@ def generate_monthly_report(
                 Payment.payment_date <= month_end
             )
         ).scalar() or 0
-    
+
     report["financial_summary"] = {
         "expected_rent": float(expected_rent),
         "collected_rent": float(collected_rent),
         "collection_rate": round((collected_rent / expected_rent * 100) if expected_rent > 0 else 0, 2)
     }
-    
+
     return report
-
-
-# =====================================================
-# FILE 2: app/api/routes/agent.py (COMPLETE)
-# =====================================================
-"""
-Agent Portal Routes - Complete Implementation
-Property management, commission tracking, earnings analytics, meter readings
-"""
-
-agent_router = APIRouter(tags=["agent"])
-
-
-@agent_router.get("/dashboard")
-def get_agent_dashboard(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Get agent dashboard with properties and earnings"""
-    if current_user.role != UserRole.AGENT:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
-    # Get agent's properties (simplified - in real app, would have assignment table)
-    properties = db.query(Property).all()
-    
-    if not properties:
-        return {"success": True, "properties": 0, "metrics": {}}
-    
-    property_ids = [p.id for p in properties]
-    
-    # Calculate metrics
-    total_units = db.query(Unit).filter(Unit.property_id.in_(property_ids)).count()
-    occupied_units = db.query(Unit).filter(
-        and_(Unit.property_id.in_(property_ids), Unit.is_occupied == True)
-    ).count()
-    
-    today = datetime.utcnow().date()
-    current_month_start = datetime(today.year, today.month, 1).date()
-    current_month_end = datetime(today.year, today.month + 1 if today.month < 12 else 1, 1).date() - timedelta(days=1)
-    
-    collected_rent = db.query(func.sum(Payment.amount))\
-        .filter(
-            and_(
-                Payment.payment_type == PaymentType.RENT,
-                Payment.status == PaymentStatus.COMPLETED,
-                Payment.payment_date >= current_month_start,
-                Payment.payment_date <= current_month_end
-            )
-        ).scalar() or 0
-    
-    # Commission: 5% of collections
-    commission = collected_rent * 0.05
-    
-    return {
-        "success": True,
-        "properties_count": len(properties),
-        "timestamp": datetime.utcnow().isoformat(),
-        "metrics": {
-            "total_units": total_units,
-            "occupied_units": occupied_units,
-            "occupancy_rate": round((occupied_units / total_units * 100) if total_units > 0 else 0, 2),
-            "collected_rent": float(collected_rent),
-            "commission_earned": float(commission)
-        }
-    }
-
-
-@agent_router.get("/earnings")
-def get_agent_earnings(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-    months: int = 12
-):
-    """Get agent earnings history"""
-    if current_user.role != UserRole.AGENT:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
-    properties = db.query(Property).all()
-    property_ids = [p.id for p in properties]
-    
-    earnings_data = []
-    today = datetime.utcnow().date()
-    
-    for i in range(months):
-        month_date = today - timedelta(days=30*i)
-        month_start = datetime(month_date.year, month_date.month, 1).date()
-        month_end = datetime(month_date.year, month_date.month + 1 if month_date.month < 12 else 1, 1).date() - timedelta(days=1)
-        
-        # Calculate earnings for this month
-        rent_collected = db.query(func.sum(Payment.amount))\
-            .filter(
-                and_(
-                    Payment.payment_type == PaymentType.RENT,
-                    Payment.status == PaymentStatus.COMPLETED,
-                    Payment.payment_date >= month_start,
-                    Payment.payment_date <= month_end
-                )
-            ).scalar() or 0
-        
-        water_collected = db.query(func.sum(Payment.amount))\
-            .filter(
-                and_(
-                    Payment.payment_type == PaymentType.WATER,
-                    Payment.status == PaymentStatus.COMPLETED,
-                    Payment.payment_date >= month_start,
-                    Payment.payment_date <= month_end
-                )
-            ).scalar() or 0
-        
-        electricity_collected = db.query(func.sum(Payment.amount))\
-            .filter(
-                and_(
-                    Payment.payment_type == PaymentType.ELECTRICITY,
-                    Payment.status == PaymentStatus.COMPLETED,
-                    Payment.payment_date >= month_start,
-                    Payment.payment_date <= month_end
-                )
-            ).scalar() or 0
-        
-        commission = (rent_collected * 0.05) + (water_collected * 0.02) + (electricity_collected * 0.02)
-        
-        earnings_data.append({
-            "month": f"{month_date.year}-{month_date.month:02d}",
-            "rent_commission": float(rent_collected * 0.05),
-            "water_commission": float(water_collected * 0.02),
-            "electricity_commission": float(electricity_collected * 0.02),
-            "total_commission": float(commission)
-        })
-    
-    return {
-        "success": True,
-        "agent_id": current_user.id,
-        "earnings": earnings_data
-    }
-
-
-@agent_router.get("/properties")
-def get_agent_properties(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Get properties managed by agent"""
-    if current_user.role != UserRole.AGENT:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
-    properties = db.query(Property).all()
-    
-    property_list = []
-    for prop in properties:
-        units = db.query(Unit).filter(Unit.property_id == prop.id).count()
-        occupied = db.query(Unit).filter(
-            and_(Unit.property_id == prop.id, Unit.is_occupied == True)
-        ).count()
-        
-        property_list.append({
-            "id": prop.id,
-            "name": prop.name,
-            "address": prop.address,
-            "total_units": units,
-            "occupied_units": occupied,
-            "occupancy_rate": round((occupied / units * 100) if units > 0 else 0, 2)
-        })
-    
-    return {
-        "success": True,
-        "total_properties": len(properties),
-        "properties": property_list
-    }
-
-
-@agent_router.post("/properties/{property_id}/add")
-def add_property(
-    property_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Add property to agent's portfolio"""
-    if current_user.role != UserRole.AGENT:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
-    property = db.query(Property).filter(Property.id == property_id).first()
-    if not property:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Property not found")
-    
-    return {
-        "success": True,
-        "message": f"Property {property.name} added successfully",
-        "property_id": property_id
-    }
-
-
-@agent_router.get("/meter-readings/{property_id}")
-def get_meter_readings(
-    property_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Get meter readings for property"""
-    if current_user.role != UserRole.AGENT:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
-    property = db.query(Property).filter(Property.id == property_id).first()
-    if not property:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Property not found")
-    
-    readings = db.query(MeterReading)\
-        .join(Unit, MeterReading.unit_id == Unit.id)\
-        .filter(Unit.property_id == property_id)\
-        .order_by(desc(MeterReading.reading_date))\
-        .all()
-    
-    return {
-        "success": True,
-        "property_id": property_id,
-        "readings_count": len(readings),
-        "readings": [
-            {
-                "unit_id": r.unit_id,
-                "water": r.water_reading,
-                "electricity": r.electricity_reading,
-                "date": r.reading_date.isoformat()
-            }
-            for r in readings
-        ]
-    }
-
-
-@agent_router.post("/meter-readings/bulk")
-def bulk_upload_readings(
-    property_id: int,
-    readings: List[dict],
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Bulk upload meter readings"""
-    if current_user.role != UserRole.AGENT:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
-    property = db.query(Property).filter(Property.id == property_id).first()
-    if not property:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Property not found")
-    
-    created_count = 0
-    for reading_data in readings:
-        unit = db.query(Unit).filter(Unit.id == reading_data["unit_id"]).first()
-        if unit:
-            reading = MeterReading(
-                unit_id=reading_data["unit_id"],
-                water_reading=reading_data.get("water"),
-                electricity_reading=reading_data.get("electricity"),
-                recorded_by=current_user.full_name,
-                reading_date=datetime.utcnow()
-            )
-            db.add(reading)
-            created_count += 1
-    
-    db.commit()
-    
-    return {
-        "success": True,
-        "created": created_count,
-        "total_submitted": len(readings)
-    }

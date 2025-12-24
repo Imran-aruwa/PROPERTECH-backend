@@ -19,6 +19,11 @@ class UserRole(str, Enum):
     TENANT = "tenant"
     AGENT = "agent"
     CARETAKER = "caretaker"
+    # Staff sub-roles
+    HEAD_SECURITY = "head_security"
+    HEAD_GARDENER = "head_gardener"
+    SECURITY_GUARD = "security_guard"
+    GARDENER = "gardener"
 
 class User(Base):
     """

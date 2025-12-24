@@ -21,6 +21,42 @@ from app.models.maintenance import MaintenanceRequest
 router = APIRouter(tags=["staff"])
 
 
+# ==================== ROOT ENDPOINT ====================
+
+@router.get("")
+@router.get("/")
+def get_all_staff(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all staff members (accessible by owners, caretakers, and staff supervisors)"""
+    allowed_roles = [UserRole.OWNER, UserRole.CARETAKER, UserRole.HEAD_SECURITY, UserRole.HEAD_GARDENER, UserRole.ADMIN]
+    if current_user.role not in allowed_roles:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    staff_members = db.query(Staff).all()
+
+    staff_list = []
+    for s in staff_members:
+        staff_list.append({
+            "id": str(s.id),
+            "user_id": str(s.user_id) if s.user_id else None,
+            "name": s.user.full_name if s.user else "Unknown",
+            "email": s.user.email if s.user else "N/A",
+            "position": s.position,
+            "department": s.department,
+            "salary": float(s.salary) if s.salary else 0,
+            "start_date": s.start_date.isoformat() if s.start_date else None,
+            "property_id": str(s.property_id) if s.property_id else None
+        })
+
+    return {
+        "success": True,
+        "total_staff": len(staff_list),
+        "staff": staff_list
+    }
+
+
 # ==================== ATTENDANCE ====================
 
 @router.post("/check-in")
