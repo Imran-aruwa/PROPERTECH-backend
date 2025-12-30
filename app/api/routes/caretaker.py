@@ -94,25 +94,216 @@ def get_caretaker_dashboard(
             )
         ).count()
     
+    # Tenants count
+    total_tenants = db.query(Tenant).filter(Tenant.status == "active").count()
+
+    # Pending payments
+    pending_payments = db.query(func.sum(Payment.amount))\
+        .filter(Payment.status == PaymentStatus.PENDING)\
+        .scalar() or 0
+
+    # Tasks for caretaker (using maintenance requests as tasks)
+    tasks = db.query(MaintenanceRequest)\
+        .filter(MaintenanceRequest.status.in_([MaintenanceStatus.PENDING, MaintenanceStatus.IN_PROGRESS]))\
+        .order_by(desc(MaintenanceRequest.created_at))\
+        .limit(5)\
+        .all()
+
+    task_list = [
+        {
+            "id": str(t.id),
+            "description": t.title,
+            "completed": t.status == MaintenanceStatus.COMPLETED,
+            "priority": t.priority.value if t.priority else "medium"
+        }
+        for t in tasks
+    ]
+
+    # Recent issues/maintenance
+    issues = db.query(MaintenanceRequest)\
+        .order_by(desc(MaintenanceRequest.created_at))\
+        .limit(5)\
+        .all()
+
+    issue_list = [
+        {
+            "id": str(i.id),
+            "title": i.title,
+            "description": i.description or "",
+            "reported_at": i.created_at.isoformat() if i.created_at else None,
+            "priority": i.priority.value if i.priority else "medium"
+        }
+        for i in issues
+    ]
+
     return {
         "success": True,
-        "timestamp": datetime.utcnow().isoformat(),
-        "metrics": {
-            "properties": len(properties),
-            "total_units": total_units,
-            "occupied_units": occupied_units,
-            "occupancy_rate": round(occupancy_rate, 2),
-            "expected_rent": float(expected_rent),
-            "collected_rent": float(collected_rent),
-            "collection_rate": round(collection_rate, 2),
-            "maintenance_requests": total_maintenance,
-            "pending_maintenance": pending_maintenance,
-            "pending_meter_readings": pending_readings
-        }
+        "rent_collected": float(collected_rent),
+        "pending_payments": float(pending_payments),
+        "maintenance_requests": pending_maintenance,
+        "total_tenants": total_tenants,
+        "tasks": task_list,
+        "issues": issue_list
+    }
+
+
+# ==================== OUTSTANDING PAYMENTS ====================
+
+@router.get("/outstanding-payments")
+def get_outstanding_payments(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all outstanding/overdue payments"""
+    if current_user.role != UserRole.CARETAKER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    today = datetime.utcnow().date()
+
+    # Get all pending/overdue payments
+    overdue_payments = db.query(Payment, Tenant, Unit)\
+        .join(Tenant, Payment.tenant_id == Tenant.id)\
+        .join(Unit, Tenant.unit_id == Unit.id)\
+        .filter(
+            and_(
+                Payment.status == PaymentStatus.PENDING,
+                Payment.due_date < today
+            )
+        ).all()
+
+    total_outstanding = sum(p.Payment.amount for p in overdue_payments)
+    overdue_tenants = len(set(p.Tenant.id for p in overdue_payments))
+
+    # Calculate average days late
+    total_days = 0
+    for p in overdue_payments:
+        if p.Payment.due_date:
+            total_days += (today - p.Payment.due_date).days
+    average_days_late = round(total_days / len(overdue_payments), 1) if overdue_payments else 0
+
+    payment_list = []
+    for p in overdue_payments:
+        days_overdue = (today - p.Payment.due_date).days if p.Payment.due_date else 0
+        payment_list.append({
+            "id": str(p.Payment.id),
+            "tenant": p.Tenant.full_name,
+            "unit": p.Unit.unit_number,
+            "amount": float(p.Payment.amount),
+            "due_date": p.Payment.due_date.isoformat() if p.Payment.due_date else None,
+            "days_overdue": days_overdue,
+            "phone": p.Tenant.phone,
+            "status": p.Payment.status.value
+        })
+
+    return {
+        "success": True,
+        "total_outstanding": float(total_outstanding),
+        "overdue_tenants": overdue_tenants,
+        "average_days_late": average_days_late,
+        "payments": payment_list
+    }
+
+
+# ==================== CARETAKER TENANTS ====================
+
+@router.get("/tenants")
+def get_caretaker_tenants(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all tenants managed by caretaker"""
+    if current_user.role != UserRole.CARETAKER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    tenants = db.query(Tenant).all()
+    active_tenants = [t for t in tenants if t.status == "active"]
+
+    today = datetime.utcnow().date()
+    current_month_start = datetime(today.year, today.month, 1).date()
+
+    # Count move-ins this month
+    move_ins_this_month = len([
+        t for t in tenants
+        if t.move_in_date and t.move_in_date >= current_month_start
+    ])
+
+    tenant_list = []
+    for tenant in tenants:
+        unit = db.query(Unit).filter(Unit.id == tenant.unit_id).first()
+
+        tenant_list.append({
+            "id": str(tenant.id),
+            "name": tenant.full_name,
+            "unit": unit.unit_number if unit else None,
+            "phone": tenant.phone,
+            "email": tenant.email,
+            "rent_amount": float(unit.monthly_rent) if unit else 0,
+            "lease_start": tenant.lease_start.isoformat() if tenant.lease_start else None,
+            "lease_end": tenant.lease_end.isoformat() if tenant.lease_end else None,
+            "status": tenant.status
+        })
+
+    return {
+        "success": True,
+        "total_tenants": len(tenants),
+        "active_leases": len(active_tenants),
+        "move_ins_this_month": move_ins_this_month,
+        "tenants": tenant_list
     }
 
 
 # ==================== METER READINGS ====================
+
+@router.get("/meter-readings")
+def get_all_meter_readings(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get current meter readings for all units"""
+    if current_user.role != UserRole.CARETAKER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    # Get all occupied units with their latest readings
+    units = db.query(Unit).filter(Unit.is_occupied == True).all()
+
+    unit_readings = []
+    for unit in units:
+        tenant = db.query(Tenant).filter(
+            and_(Tenant.unit_id == unit.id, Tenant.status == "active")
+        ).first()
+
+        # Get latest reading
+        latest_reading = db.query(MeterReading)\
+            .filter(MeterReading.unit_id == unit.id)\
+            .order_by(desc(MeterReading.reading_date))\
+            .first()
+
+        # Get previous reading
+        prev_reading = db.query(MeterReading)\
+            .filter(MeterReading.unit_id == unit.id)\
+            .order_by(desc(MeterReading.reading_date))\
+            .offset(1)\
+            .first()
+
+        unit_readings.append({
+            "id": str(unit.id),
+            "unit": unit.unit_number,
+            "tenant": tenant.full_name if tenant else None,
+            "previous_reading": {
+                "water": prev_reading.water_reading if prev_reading else 0,
+                "electricity": prev_reading.electricity_reading if prev_reading else 0
+            },
+            "current_reading": {
+                "water": latest_reading.water_reading if latest_reading else 0,
+                "electricity": latest_reading.electricity_reading if latest_reading else 0
+            }
+        })
+
+    return {
+        "success": True,
+        "units": unit_readings
+    }
+
 
 @router.post("/meter-readings", response_model=MeterReadingResponse, status_code=status.HTTP_201_CREATED)
 def record_meter_reading(

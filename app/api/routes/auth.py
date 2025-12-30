@@ -118,7 +118,37 @@ def login(user_credentials: UserLogin, db: Session = Depends(get_db)):
     }
 
 
-@router.get("/me", response_model=UserResponse)
+@router.get("/me")
 async def get_current_user_info(current_user: User = Depends(get_current_user)):
     """Get current user information"""
-    return current_user
+    user_role = getattr(current_user, 'role', None)
+    if user_role is not None:
+        role_value = user_role.value if hasattr(user_role, 'value') else str(user_role)
+    else:
+        role_value = "owner"
+
+    return {
+        "id": str(current_user.id),
+        "email": current_user.email,
+        "full_name": current_user.full_name or "",
+        "phone": current_user.phone or "",
+        "role": role_value.upper(),
+        "avatar_url": current_user.avatar_url,
+        "created_at": current_user.created_at.isoformat() if current_user.created_at else None
+    }
+
+
+@router.post("/forgot-password")
+def forgot_password(email: str, db: Session = Depends(get_db)):
+    """
+    Request password reset
+    In production, this would send an email with reset link
+    """
+    user = db.query(User).filter(User.email == email).first()
+
+    # Always return success to prevent email enumeration
+    # In production, send email if user exists
+    return {
+        "success": True,
+        "message": "If an account with this email exists, a password reset link has been sent."
+    }

@@ -23,7 +23,11 @@ from app.api.routes import (
     caretaker_router,
     owner_router,
     agent_router,
-    staff_router
+    staff_router,
+    tenant_portal_router,
+    settings_router,
+    staff_security_router,
+    staff_gardener_router
 )
 from app.core.config import settings
 from app.database import test_connection, init_db, close_db_connection
@@ -127,6 +131,10 @@ app.include_router(caretaker_router, prefix="/api/caretaker", tags=["Caretaker"]
 app.include_router(owner_router, prefix="/api/owner", tags=["Owner"])
 app.include_router(agent_router, prefix="/api/agent", tags=["Agent"])
 app.include_router(staff_router, prefix="/api/staff", tags=["Staff"])
+app.include_router(tenant_portal_router, prefix="/api/tenant", tags=["Tenant Portal"])
+app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])
+app.include_router(staff_security_router, prefix="/api/staff/security", tags=["Security Staff"])
+app.include_router(staff_gardener_router, prefix="/api/staff/gardener", tags=["Gardener Staff"])
 
 
 # ==================== ERROR HANDLERS ====================

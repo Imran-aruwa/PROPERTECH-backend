@@ -12,6 +12,7 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import User, UserRole
 from app.models.property import Property, Unit
+from app.models.tenant import Tenant
 from app.models.payment import Payment, PaymentStatus, PaymentType
 from app.models.meter import MeterReading
 
@@ -58,17 +59,39 @@ def get_agent_dashboard(
     # Commission: 5% of collections
     commission = collected_rent * 0.05
 
+    # Count tenants
+    total_tenants = db.query(Tenant).filter(Tenant.status == "active").count()
+
+    # Pending amount
+    pending_amount = db.query(func.sum(Payment.amount))\
+        .filter(
+            and_(
+                Payment.payment_type == PaymentType.RENT,
+                Payment.status == PaymentStatus.PENDING
+            )
+        ).scalar() or 0
+
+    # Recent activities
+    recent_activities = []
+    recent_payments = db.query(Payment)\
+        .order_by(desc(Payment.created_at))\
+        .limit(5)\
+        .all()
+
+    for p in recent_payments:
+        recent_activities.append({
+            "type": "payment",
+            "description": f"Payment of KES {p.amount:,.0f} - {p.status.value}",
+            "timestamp": p.created_at.isoformat() if p.created_at else None
+        })
+
     return {
         "success": True,
-        "properties_count": len(properties),
-        "timestamp": datetime.utcnow().isoformat(),
-        "metrics": {
-            "total_units": total_units,
-            "occupied_units": occupied_units,
-            "occupancy_rate": round((occupied_units / total_units * 100) if total_units > 0 else 0, 2),
-            "collected_rent": float(collected_rent),
-            "commission_earned": float(commission)
-        }
+        "total_properties": len(properties),
+        "total_tenants": total_tenants,
+        "rent_collected": float(collected_rent),
+        "pending_amount": float(pending_amount),
+        "recent_activities": recent_activities
     }
 
 
@@ -172,6 +195,180 @@ def get_agent_properties(
         "success": True,
         "total_properties": len(properties),
         "properties": property_list
+    }
+
+
+@router.get("/tenants")
+def get_agent_tenants(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all tenants managed by agent"""
+    if current_user.role != UserRole.AGENT:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    tenants = db.query(Tenant).filter(Tenant.status == "active").all()
+
+    tenant_list = []
+    for tenant in tenants:
+        unit = db.query(Unit).filter(Unit.id == tenant.unit_id).first()
+        prop = db.query(Property).filter(Property.id == unit.property_id).first() if unit else None
+
+        today = datetime.utcnow().date()
+        current_month_start = datetime(today.year, today.month, 1).date()
+        current_month_end = datetime(today.year, today.month + 1 if today.month < 12 else 1, 1).date() - timedelta(days=1)
+
+        rent_payment = db.query(Payment).filter(
+            and_(
+                Payment.tenant_id == tenant.id,
+                Payment.payment_type == PaymentType.RENT,
+                Payment.due_date >= current_month_start,
+                Payment.due_date <= current_month_end
+            )
+        ).first()
+
+        tenant_list.append({
+            "id": str(tenant.id),
+            "name": tenant.full_name,
+            "unit": unit.unit_number if unit else None,
+            "property": prop.name if prop else None,
+            "phone": tenant.phone,
+            "rent_status": rent_payment.status.value if rent_payment else "pending",
+            "rent_amount": float(unit.monthly_rent) if unit else 0
+        })
+
+    return {
+        "success": True,
+        "tenants": tenant_list
+    }
+
+
+@router.get("/rent-tracking")
+def get_agent_rent_tracking(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get rent tracking data for agent"""
+    if current_user.role != UserRole.AGENT:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    properties = db.query(Property).all()
+    property_ids = [p.id for p in properties]
+
+    today = datetime.utcnow().date()
+    current_month_start = datetime(today.year, today.month, 1).date()
+    current_month_end = datetime(today.year, today.month + 1 if today.month < 12 else 1, 1).date() - timedelta(days=1)
+
+    # Total expected rent
+    total_expected = db.query(func.sum(Unit.monthly_rent))\
+        .filter(and_(Unit.property_id.in_(property_ids), Unit.is_occupied == True))\
+        .scalar() or 0
+
+    # Total collected
+    total_collected = db.query(func.sum(Payment.amount))\
+        .filter(
+            and_(
+                Payment.payment_type == PaymentType.RENT,
+                Payment.status == PaymentStatus.COMPLETED,
+                Payment.payment_date >= current_month_start,
+                Payment.payment_date <= current_month_end
+            )
+        ).scalar() or 0
+
+    pending = float(total_expected) - float(total_collected)
+    collection_rate = (float(total_collected) / float(total_expected) * 100) if total_expected > 0 else 0
+
+    # Per-property breakdown
+    property_breakdown = []
+    for prop in properties:
+        prop_expected = db.query(func.sum(Unit.monthly_rent))\
+            .filter(and_(Unit.property_id == prop.id, Unit.is_occupied == True))\
+            .scalar() or 0
+
+        prop_collected = db.query(func.sum(Payment.amount))\
+            .filter(
+                and_(
+                    Payment.payment_type == PaymentType.RENT,
+                    Payment.status == PaymentStatus.COMPLETED,
+                    Payment.payment_date >= current_month_start,
+                    Payment.payment_date <= current_month_end
+                )
+            ).scalar() or 0
+
+        prop_pending = float(prop_expected) - float(prop_collected)
+        prop_rate = (float(prop_collected) / float(prop_expected) * 100) if prop_expected > 0 else 0
+
+        property_breakdown.append({
+            "id": str(prop.id),
+            "name": prop.name,
+            "expected": float(prop_expected),
+            "collected": float(prop_collected),
+            "pending": prop_pending,
+            "rate": round(prop_rate, 2)
+        })
+
+    return {
+        "success": True,
+        "total_expected": float(total_expected),
+        "total_collected": float(total_collected),
+        "pending": pending,
+        "collection_rate": round(collection_rate, 2),
+        "properties": property_breakdown
+    }
+
+
+@router.get("/rent-collection")
+def get_agent_rent_collection(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get detailed rent collection status"""
+    if current_user.role != UserRole.AGENT:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    today = datetime.utcnow().date()
+    current_month_start = datetime(today.year, today.month, 1).date()
+    current_month_end = datetime(today.year, today.month + 1 if today.month < 12 else 1, 1).date() - timedelta(days=1)
+
+    # Get all rent payments for current month
+    payments = db.query(Payment)\
+        .filter(
+            and_(
+                Payment.payment_type == PaymentType.RENT,
+                Payment.due_date >= current_month_start,
+                Payment.due_date <= current_month_end
+            )
+        ).all()
+
+    total_collected = sum(p.amount for p in payments if p.status == PaymentStatus.COMPLETED)
+    pending_amount = sum(p.amount for p in payments if p.status == PaymentStatus.PENDING)
+    tenants_paid = len([p for p in payments if p.status == PaymentStatus.COMPLETED])
+
+    payment_list = []
+    for payment in payments:
+        tenant = db.query(Tenant).filter(Tenant.id == payment.tenant_id).first()
+        unit = db.query(Unit).filter(Unit.id == tenant.unit_id).first() if tenant else None
+
+        days_overdue = 0
+        if payment.status == PaymentStatus.PENDING and payment.due_date:
+            days_overdue = max(0, (today - payment.due_date).days)
+
+        payment_list.append({
+            "id": str(payment.id),
+            "tenant": tenant.full_name if tenant else "Unknown",
+            "unit": unit.unit_number if unit else "N/A",
+            "amount": float(payment.amount),
+            "due_date": payment.due_date.isoformat() if payment.due_date else None,
+            "status": payment.status.value,
+            "days_overdue": days_overdue
+        })
+
+    return {
+        "success": True,
+        "total_collected": float(total_collected),
+        "pending_amount": float(pending_amount),
+        "tenants_paid": tenants_paid,
+        "payments": payment_list
     }
 
 

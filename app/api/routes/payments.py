@@ -333,20 +333,155 @@ async def cancel_subscription(
             .filter(Subscription.id == subscription_id)\
             .filter(Subscription.user_id == current_user.id)\
             .first()
-        
+
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
-        
+
         subscription.status = SubscriptionStatus.CANCELLED
         subscription.cancelled_at = datetime.utcnow()
         db.commit()
-        
+
         return {
             "success": True,
             "message": "Subscription cancelled successfully"
         }
-    
+
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/webhook")
+async def paystack_webhook(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Paystack webhook endpoint for payment verification
+    Handles: charge.success, transfer.success, subscription.create, etc.
+    """
+    import hashlib
+    import hmac
+
+    try:
+        # Get the raw body
+        body = await request.body()
+        payload = await request.json()
+
+        # Verify webhook signature (in production)
+        signature = request.headers.get("x-paystack-signature", "")
+        if PAYSTACK_SECRET_KEY and signature:
+            expected_signature = hmac.new(
+                PAYSTACK_SECRET_KEY.encode(),
+                body,
+                hashlib.sha512
+            ).hexdigest()
+
+            if signature != expected_signature:
+                raise HTTPException(status_code=400, detail="Invalid signature")
+
+        event = payload.get("event")
+        data = payload.get("data", {})
+
+        if event == "charge.success":
+            # Payment was successful
+            reference = data.get("reference")
+
+            payment = db.query(Payment).filter(Payment.reference == reference).first()
+            if payment:
+                payment.status = PaymentStatus.COMPLETED
+                payment.transaction_id = str(data.get("id", ""))
+                payment.paid_at = datetime.utcnow()
+                db.commit()
+
+        elif event == "transfer.success":
+            # Transfer was successful
+            reference = data.get("reference")
+            # Handle transfer success
+
+        elif event == "subscription.create":
+            # New subscription created
+            pass
+
+        elif event == "subscription.disable":
+            # Subscription disabled/cancelled
+            customer_code = data.get("customer", {}).get("customer_code")
+            # Find and update subscription
+
+        elif event == "charge.failed":
+            # Payment failed
+            reference = data.get("reference")
+
+            payment = db.query(Payment).filter(Payment.reference == reference).first()
+            if payment:
+                payment.status = PaymentStatus.FAILED
+                db.commit()
+
+        return {"success": True, "message": "Webhook received"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Log error but return 200 to prevent webhook retry
+        import logging
+        logging.error(f"Webhook error: {e}")
+        return {"success": True, "message": "Webhook processed"}
+
+
+@router.put("/{payment_id}")
+async def update_payment(
+    payment_id: str,
+    payment_status: Optional[str] = None,
+    transaction_id: Optional[str] = None,
+    payment_method: Optional[str] = None,
+    payment_date: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """
+    Update payment status (for admin/owner use)
+    """
+    from app.models.user import UserRole
+
+    # Only allow owners and admins to update payments
+    if current_user.role not in [UserRole.OWNER, UserRole.ADMIN]:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    payment = db.query(Payment).filter(Payment.id == payment_id).first()
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+
+    if payment_status:
+        status_map = {
+            "pending": PaymentStatus.PENDING,
+            "processing": PaymentStatus.PROCESSING,
+            "completed": PaymentStatus.COMPLETED,
+            "failed": PaymentStatus.FAILED,
+            "cancelled": PaymentStatus.CANCELLED,
+            "refunded": PaymentStatus.REFUNDED
+        }
+        payment.status = status_map.get(payment_status.lower(), payment.status)
+
+    if transaction_id:
+        payment.transaction_id = transaction_id
+
+    if payment_method:
+        payment.method = payment_method
+
+    if payment_date:
+        try:
+            payment.payment_date = datetime.fromisoformat(payment_date)
+        except:
+            pass
+
+    payment.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(payment)
+
+    return {
+        "success": True,
+        "message": "Payment updated successfully",
+        "payment_id": str(payment.id),
+        "status": payment.status.value
+    }
