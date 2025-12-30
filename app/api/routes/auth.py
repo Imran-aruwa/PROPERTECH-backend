@@ -97,8 +97,19 @@ def login(user_credentials: UserLogin, db: Session = Depends(get_db)):
         )
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+
+    # Safely extract role value for JWT
+    user_role_jwt = getattr(user, 'role', None)
+    role_for_jwt = user_role_jwt.value if hasattr(user_role_jwt, 'value') else str(user_role_jwt) if user_role_jwt else "owner"
+
     access_token = create_access_token(
-        data={"sub": user.email}, expires_delta=access_token_expires
+        data={
+            "sub": str(user.id),  # User ID as subject (required for auth)
+            "user_id": str(user.id),  # Explicit user_id field
+            "email": user.email,
+            "role": role_for_jwt
+        },
+        expires_delta=access_token_expires
     )
 
     # Safely extract role value (handle enum or string)
