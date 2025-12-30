@@ -15,8 +15,21 @@ from app.models.property import Property, Unit
 from app.models.tenant import Tenant
 from app.models.payment import Payment, PaymentStatus, PaymentType
 from app.models.meter import MeterReading
+from app.models.lead import Lead, LeadStatus
+from pydantic import BaseModel
 
 router = APIRouter(tags=["agent"])
+
+
+# Pydantic schema for lead creation
+class LeadCreate(BaseModel):
+    name: str
+    email: Optional[str] = None
+    phone: str
+    property_interest: Optional[str] = None
+    budget: Optional[float] = None
+    source: Optional[str] = None
+    notes: Optional[str] = None
 
 
 @router.get("/dashboard")
@@ -405,4 +418,185 @@ def get_meter_readings(
             }
             for r in readings
         ]
+    }
+
+
+@router.get("/leads")
+def get_agent_leads(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all leads for agent"""
+    if current_user.role != UserRole.AGENT:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    # Get leads for this agent
+    leads = db.query(Lead).filter(Lead.agent_id == current_user.id).order_by(desc(Lead.created_at)).all()
+
+    # Calculate stats
+    total_leads = len(leads)
+    new_leads = len([l for l in leads if l.status == LeadStatus.NEW])
+    contacted = len([l for l in leads if l.status == LeadStatus.CONTACTED])
+    converted = len([l for l in leads if l.status == LeadStatus.CONVERTED])
+
+    lead_list = []
+    for lead in leads:
+        lead_list.append({
+            "id": str(lead.id),
+            "name": lead.name,
+            "email": lead.email,
+            "phone": lead.phone,
+            "property_interest": lead.property_interest,
+            "budget": float(lead.budget) if lead.budget else None,
+            "status": lead.status.value,
+            "source": lead.source,
+            "created_at": lead.created_at.isoformat() if lead.created_at else None,
+            "notes": lead.notes
+        })
+
+    return {
+        "success": True,
+        "total_leads": total_leads,
+        "new_leads": new_leads,
+        "contacted": contacted,
+        "converted": converted,
+        "leads": lead_list
+    }
+
+
+@router.post("/leads")
+def create_agent_lead(
+    lead_data: LeadCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Create a new lead"""
+    if current_user.role != UserRole.AGENT:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    import uuid
+
+    new_lead = Lead(
+        id=uuid.uuid4(),
+        agent_id=current_user.id,
+        name=lead_data.name,
+        email=lead_data.email,
+        phone=lead_data.phone,
+        property_interest=lead_data.property_interest,
+        budget=lead_data.budget,
+        source=lead_data.source,
+        notes=lead_data.notes,
+        status=LeadStatus.NEW
+    )
+
+    db.add(new_lead)
+    db.commit()
+    db.refresh(new_lead)
+
+    return {
+        "success": True,
+        "message": "Lead created successfully",
+        "lead": {
+            "id": str(new_lead.id),
+            "name": new_lead.name,
+            "email": new_lead.email,
+            "phone": new_lead.phone,
+            "property_interest": new_lead.property_interest,
+            "budget": float(new_lead.budget) if new_lead.budget else None,
+            "status": new_lead.status.value,
+            "source": new_lead.source,
+            "created_at": new_lead.created_at.isoformat() if new_lead.created_at else None,
+            "notes": new_lead.notes
+        }
+    }
+
+
+@router.put("/leads/{lead_id}")
+def update_agent_lead(
+    lead_id: str,
+    lead_data: LeadCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update a lead"""
+    if current_user.role != UserRole.AGENT:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    lead = db.query(Lead).filter(
+        and_(Lead.id == lead_id, Lead.agent_id == current_user.id)
+    ).first()
+
+    if not lead:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+
+    lead.name = lead_data.name
+    lead.email = lead_data.email
+    lead.phone = lead_data.phone
+    lead.property_interest = lead_data.property_interest
+    lead.budget = lead_data.budget
+    lead.source = lead_data.source
+    lead.notes = lead_data.notes
+
+    db.commit()
+    db.refresh(lead)
+
+    return {
+        "success": True,
+        "message": "Lead updated successfully",
+        "lead": {
+            "id": str(lead.id),
+            "name": lead.name,
+            "email": lead.email,
+            "phone": lead.phone,
+            "property_interest": lead.property_interest,
+            "budget": float(lead.budget) if lead.budget else None,
+            "status": lead.status.value,
+            "source": lead.source,
+            "created_at": lead.created_at.isoformat() if lead.created_at else None,
+            "notes": lead.notes
+        }
+    }
+
+
+class LeadStatusUpdate(BaseModel):
+    status: str
+
+
+@router.patch("/leads/{lead_id}/status")
+def update_lead_status(
+    lead_id: str,
+    status_update: LeadStatusUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update lead status"""
+    if current_user.role != UserRole.AGENT:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    lead = db.query(Lead).filter(
+        and_(Lead.id == lead_id, Lead.agent_id == current_user.id)
+    ).first()
+
+    if not lead:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+
+    try:
+        new_status = LeadStatus(status_update.status.lower())
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid status. Must be one of: {[s.value for s in LeadStatus]}"
+        )
+
+    lead.status = new_status
+    if new_status == LeadStatus.CONTACTED:
+        lead.last_contacted_at = datetime.utcnow()
+
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"Lead status updated to {new_status.value}",
+        "lead_id": str(lead.id),
+        "status": new_status.value
     }

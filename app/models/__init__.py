@@ -44,6 +44,12 @@ try:
 except ImportError:
     Equipment = None
 
+try:
+    from app.models.lead import Lead, LeadStatus
+except ImportError:
+    Lead = None
+    LeadStatus = None
+
 __all__ = [
     "User",
     "UserRole",
