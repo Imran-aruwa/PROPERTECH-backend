@@ -60,20 +60,24 @@ def get_security_dashboard(
         )
     ).count()
 
-    # Get hours logged for current user
-    user_attendance = db.query(Attendance).filter(
-        and_(
-            Attendance.staff_id == current_user.id,
-            Attendance.date == today
-        )
-    ).first()
+    # Get staff record for current user
+    current_staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
 
+    # Get hours logged for current user
     hours_logged = 0
-    if user_attendance and user_attendance.check_in_time:
-        if user_attendance.check_out_time:
-            hours_logged = (user_attendance.check_out_time - user_attendance.check_in_time).total_seconds() / 3600
-        else:
-            hours_logged = (datetime.utcnow() - user_attendance.check_in_time).total_seconds() / 3600
+    if current_staff:
+        user_attendance = db.query(Attendance).filter(
+            and_(
+                Attendance.staff_id == current_staff.id,
+                Attendance.date == today
+            )
+        ).first()
+
+        if user_attendance and user_attendance.check_in_time:
+            if user_attendance.check_out_time:
+                hours_logged = (user_attendance.check_out_time - user_attendance.check_in_time).total_seconds() / 3600
+            else:
+                hours_logged = (datetime.utcnow() - user_attendance.check_in_time).total_seconds() / 3600
 
     # Recent incidents
     recent_incidents = db.query(Incident)\
@@ -91,9 +95,10 @@ def get_security_dashboard(
         for i in recent_incidents
     ]
 
-    # Staff on duty list
-    on_duty = db.query(Attendance, User)\
-        .join(User, Attendance.staff_id == User.id)\
+    # Staff on duty list - join Attendance -> Staff -> User
+    on_duty = db.query(Attendance, Staff, User)\
+        .join(Staff, Attendance.staff_id == Staff.id)\
+        .join(User, Staff.user_id == User.id)\
         .filter(
             and_(
                 Attendance.date == today,
@@ -212,26 +217,18 @@ def get_security_attendance(
     # Get last 30 days of attendance
     start_date = datetime.utcnow().date() - timedelta(days=30)
 
+    # Get current user's staff record
+    current_staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+
     if current_user.role == UserRole.HEAD_SECURITY:
         # Head security sees all security staff attendance
-        records = db.query(Attendance, User)\
-            .join(User, Attendance.staff_id == User.id)\
+        records = db.query(Attendance, Staff, User)\
+            .join(Staff, Attendance.staff_id == Staff.id)\
+            .join(User, Staff.user_id == User.id)\
             .filter(Attendance.date >= start_date)\
             .order_by(desc(Attendance.date))\
             .all()
-    else:
-        # Regular staff sees only their own
-        records = db.query(Attendance)\
-            .filter(
-                and_(
-                    Attendance.staff_id == current_user.id,
-                    Attendance.date >= start_date
-                )
-            )\
-            .order_by(desc(Attendance.date))\
-            .all()
 
-    if current_user.role == UserRole.HEAD_SECURITY:
         attendance_list = [
             {
                 "id": str(r.Attendance.id),
@@ -245,6 +242,20 @@ def get_security_attendance(
             for r in records
         ]
     else:
+        # Regular staff sees only their own
+        if not current_staff:
+            return {"success": True, "attendance": []}
+
+        records = db.query(Attendance)\
+            .filter(
+                and_(
+                    Attendance.staff_id == current_staff.id,
+                    Attendance.date >= start_date
+                )
+            )\
+            .order_by(desc(Attendance.date))\
+            .all()
+
         attendance_list = [
             {
                 "id": str(r.id),
@@ -273,12 +284,17 @@ def record_security_attendance(
     if current_user.role not in [UserRole.HEAD_SECURITY, UserRole.SECURITY_GUARD]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
+    # Get current user's staff record
+    current_staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+    if not current_staff:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Staff record not found")
+
     today = datetime.utcnow().date()
 
     # Check if already checked in
     existing = db.query(Attendance).filter(
         and_(
-            Attendance.staff_id == current_user.id,
+            Attendance.staff_id == current_staff.id,
             Attendance.date == today
         )
     ).first()
@@ -288,7 +304,7 @@ def record_security_attendance(
 
     attendance = Attendance(
         id=uuid.uuid4(),
-        staff_id=current_user.id,
+        staff_id=current_staff.id,
         date=today,
         check_in_time=datetime.utcnow(),
         status="present",
@@ -319,13 +335,30 @@ def get_security_performance(
 
     start_date = datetime.utcnow().date() - timedelta(days=days)
 
+    # Get current user's staff record
+    current_staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+
     # Get attendance data
     if current_user.role == UserRole.HEAD_SECURITY:
         attendance_records = db.query(Attendance).filter(Attendance.date >= start_date).all()
     else:
+        if not current_staff:
+            return {
+                "success": True,
+                "period_days": days,
+                "metrics": {
+                    "total_hours_worked": 0,
+                    "days_present": 0,
+                    "attendance_rate": 0,
+                    "incidents_reported": 0,
+                    "incidents_resolved": 0,
+                    "resolution_rate": 100,
+                    "average_response_time": "N/A"
+                }
+            }
         attendance_records = db.query(Attendance).filter(
             and_(
-                Attendance.staff_id == current_user.id,
+                Attendance.staff_id == current_staff.id,
                 Attendance.date >= start_date
             )
         ).all()
@@ -334,13 +367,12 @@ def get_security_performance(
     if current_user.role == UserRole.HEAD_SECURITY:
         incidents = db.query(Incident).filter(Incident.reported_at >= datetime.combine(start_date, datetime.min.time())).all()
     else:
-        staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
         incidents = db.query(Incident).filter(
             and_(
-                Incident.staff_id == staff.id if staff else None,
+                Incident.staff_id == current_staff.id,
                 Incident.reported_at >= datetime.combine(start_date, datetime.min.time())
             )
-        ).all() if staff else []
+        ).all() if current_staff else []
 
     total_hours = sum(r.hours_worked or 0 for r in attendance_records)
     days_present = len([r for r in attendance_records if r.check_in_time])
@@ -376,8 +408,10 @@ def get_on_duty_staff(
     today = datetime.utcnow().date()
 
     # Get all staff currently on duty (checked in but not checked out)
-    on_duty = db.query(Attendance, User)\
-        .join(User, Attendance.staff_id == User.id)\
+    # Join Attendance -> Staff -> User
+    on_duty = db.query(Attendance, Staff, User)\
+        .join(Staff, Attendance.staff_id == Staff.id)\
+        .join(User, Staff.user_id == User.id)\
         .filter(
             and_(
                 Attendance.date == today,

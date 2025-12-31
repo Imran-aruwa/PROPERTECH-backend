@@ -14,7 +14,7 @@ from app.dependencies import get_current_user
 from app.models.user import User, UserRole
 from app.models.property import Property, Unit
 from app.models.tenant import Tenant
-from app.models.payment import Payment, PaymentStatus, PaymentType
+from app.models.payment import Payment, PaymentStatus
 from app.models.maintenance import MaintenanceRequest
 
 router = APIRouter(tags=["admin"])
@@ -324,31 +324,12 @@ def get_report_data(
     current_month_start = datetime(today.year, today.month, 1).date()
 
     if report_id == "revenue-summary":
-        # Revenue data
-        rent_collected = db.query(func.sum(Payment.amount))\
+        # Revenue data - use paid_at instead of payment_date
+        total_collected = db.query(func.sum(Payment.amount))\
             .filter(
                 and_(
-                    Payment.payment_type == PaymentType.RENT,
                     Payment.status == PaymentStatus.COMPLETED,
-                    Payment.payment_date >= current_month_start
-                )
-            ).scalar() or 0
-
-        water_collected = db.query(func.sum(Payment.amount))\
-            .filter(
-                and_(
-                    Payment.payment_type == PaymentType.WATER,
-                    Payment.status == PaymentStatus.COMPLETED,
-                    Payment.payment_date >= current_month_start
-                )
-            ).scalar() or 0
-
-        electricity_collected = db.query(func.sum(Payment.amount))\
-            .filter(
-                and_(
-                    Payment.payment_type == PaymentType.ELECTRICITY,
-                    Payment.status == PaymentStatus.COMPLETED,
-                    Payment.payment_date >= current_month_start
+                    Payment.paid_at >= datetime.combine(current_month_start, datetime.min.time())
                 )
             ).scalar() or 0
 
@@ -358,10 +339,8 @@ def get_report_data(
             "title": "Revenue Summary Report",
             "period": f"{current_month_start} to {today}",
             "data": {
-                "rent_collected": float(rent_collected),
-                "water_collected": float(water_collected),
-                "electricity_collected": float(electricity_collected),
-                "total_revenue": float(rent_collected + water_collected + electricity_collected)
+                "total_collected": float(total_collected),
+                "total_revenue": float(total_collected)
             }
         }
 
@@ -430,12 +409,11 @@ def get_report_data(
             .filter(Unit.is_occupied == True)\
             .scalar() or 0
 
-        collected_rent = db.query(func.sum(Payment.amount))\
+        collected_payments = db.query(func.sum(Payment.amount))\
             .filter(
                 and_(
-                    Payment.payment_type == PaymentType.RENT,
                     Payment.status == PaymentStatus.COMPLETED,
-                    Payment.payment_date >= current_month_start
+                    Payment.paid_at >= datetime.combine(current_month_start, datetime.min.time())
                 )
             ).scalar() or 0
 
@@ -449,9 +427,9 @@ def get_report_data(
             "title": "Payment Collection Report",
             "data": {
                 "expected_rent": float(expected_rent),
-                "collected_rent": float(collected_rent),
+                "collected_payments": float(collected_payments),
                 "pending_payments": float(pending_payments),
-                "collection_rate": round((float(collected_rent) / float(expected_rent) * 100) if expected_rent > 0 else 0, 2)
+                "collection_rate": round((float(collected_payments) / float(expected_rent) * 100) if expected_rent > 0 else 0, 2)
             }
         }
 
@@ -481,7 +459,7 @@ def get_system_stats(
         .filter(
             and_(
                 Payment.status == PaymentStatus.COMPLETED,
-                Payment.payment_date >= current_month_start
+                Payment.paid_at >= datetime.combine(current_month_start, datetime.min.time())
             )
         ).scalar() or 0
 
@@ -515,38 +493,17 @@ def generate_admin_report(
     report_data = {}
 
     if report_type == "revenue-summary":
-        rent_collected = db.query(func.sum(Payment.amount))\
+        total_collected = db.query(func.sum(Payment.amount))\
             .filter(
                 and_(
-                    Payment.payment_type == PaymentType.RENT,
                     Payment.status == PaymentStatus.COMPLETED,
-                    Payment.payment_date >= current_month_start
-                )
-            ).scalar() or 0
-
-        water_collected = db.query(func.sum(Payment.amount))\
-            .filter(
-                and_(
-                    Payment.payment_type == PaymentType.WATER,
-                    Payment.status == PaymentStatus.COMPLETED,
-                    Payment.payment_date >= current_month_start
-                )
-            ).scalar() or 0
-
-        electricity_collected = db.query(func.sum(Payment.amount))\
-            .filter(
-                and_(
-                    Payment.payment_type == PaymentType.ELECTRICITY,
-                    Payment.status == PaymentStatus.COMPLETED,
-                    Payment.payment_date >= current_month_start
+                    Payment.paid_at >= datetime.combine(current_month_start, datetime.min.time())
                 )
             ).scalar() or 0
 
         report_data = {
-            "rent_collected": float(rent_collected),
-            "water_collected": float(water_collected),
-            "electricity_collected": float(electricity_collected),
-            "total_revenue": float(rent_collected + water_collected + electricity_collected)
+            "total_collected": float(total_collected),
+            "total_revenue": float(total_collected)
         }
 
     elif report_type == "full-system":
@@ -561,7 +518,7 @@ def generate_admin_report(
             .filter(
                 and_(
                     Payment.status == PaymentStatus.COMPLETED,
-                    Payment.payment_date >= current_month_start
+                    Payment.paid_at >= datetime.combine(current_month_start, datetime.min.time())
                 )
             ).scalar() or 0
 

@@ -160,37 +160,39 @@ def get_outstanding_payments(
 
     today = datetime.utcnow().date()
 
-    # Get all pending/overdue payments
+    # Get all pending payments (Payment has user_id, join via User)
+    # Join: Payment -> User -> Tenant -> Unit
+    from app.models.user import User
     overdue_payments = db.query(Payment, Tenant, Unit)\
-        .join(Tenant, Payment.tenant_id == Tenant.id)\
+        .join(User, Payment.user_id == User.id)\
+        .join(Tenant, Tenant.user_id == User.id)\
         .join(Unit, Tenant.unit_id == Unit.id)\
         .filter(
-            and_(
-                Payment.status == PaymentStatus.PENDING,
-                Payment.due_date < today
-            )
+            Payment.status == PaymentStatus.PENDING
         ).all()
 
     total_outstanding = sum(p.Payment.amount for p in overdue_payments)
     overdue_tenants = len(set(p.Tenant.id for p in overdue_payments))
 
-    # Calculate average days late
+    # Calculate average days late (use created_at as reference)
     total_days = 0
     for p in overdue_payments:
-        if p.Payment.due_date:
-            total_days += (today - p.Payment.due_date).days
+        if p.Payment.created_at:
+            days_since = (today - p.Payment.created_at.date()).days
+            if days_since > 30:  # Consider overdue after 30 days
+                total_days += days_since - 30
     average_days_late = round(total_days / len(overdue_payments), 1) if overdue_payments else 0
 
     payment_list = []
     for p in overdue_payments:
-        days_overdue = (today - p.Payment.due_date).days if p.Payment.due_date else 0
+        days_since = (today - p.Payment.created_at.date()).days if p.Payment.created_at else 0
         payment_list.append({
             "id": str(p.Payment.id),
             "tenant": p.Tenant.full_name,
             "unit": p.Unit.unit_number,
             "amount": float(p.Payment.amount),
-            "due_date": p.Payment.due_date.isoformat() if p.Payment.due_date else None,
-            "days_overdue": days_overdue,
+            "due_date": p.Payment.created_at.isoformat() if p.Payment.created_at else None,
+            "days_overdue": max(0, days_since - 30),
             "phone": p.Tenant.phone,
             "status": p.Payment.status.value
         })
@@ -512,20 +514,18 @@ def get_rent_tracking(
             )
         ).scalar() or 0
     
-    # Get defaulter list
+    # Get defaulter list (join via User since Payment has user_id, not tenant_id)
+    from app.models.user import User as UserModel
     defaulters = db.query(Tenant, Unit, Payment)\
         .join(Unit, Tenant.unit_id == Unit.id)\
-        .join(Payment, Tenant.id == Payment.tenant_id)\
+        .join(UserModel, Tenant.user_id == UserModel.id)\
+        .join(Payment, Payment.user_id == UserModel.id)\
         .filter(
-            and_(
-                Payment.payment_type == PaymentType.RENT,
-                Payment.status == PaymentStatus.PENDING,
-                Payment.due_date < today
-            )
+            Payment.status == PaymentStatus.PENDING
         ).all()
-    
+
     collection_rate = (collected_rent / expected_rent * 100) if expected_rent > 0 else 0
-    
+
     return {
         "success": True,
         "period": f"{current_month_start} to {current_month_end}",
@@ -540,8 +540,8 @@ def get_rent_tracking(
             {
                 "tenant_name": t.Tenant.full_name if t.Tenant else "Unknown",
                 "unit_number": t.Unit.unit_number,
-                "amount_owed": t.Payment.amount,
-                "days_overdue": (today - t.Payment.due_date).days
+                "amount_owed": float(t.Payment.amount),
+                "days_overdue": max(0, (today - t.Payment.created_at.date()).days - 30) if t.Payment.created_at else 0
             }
             for t in defaulters
         ]
@@ -1054,25 +1054,25 @@ def send_rent_reminders(
 
     today = datetime.utcnow().date()
 
-    # Get all pending/overdue payments
+    # Get all pending payments (join via User since Payment has user_id)
+    from app.models.user import User as ReminderUser
     overdue_payments = db.query(Payment, Tenant)\
-        .join(Tenant, Payment.tenant_id == Tenant.id)\
+        .join(ReminderUser, Payment.user_id == ReminderUser.id)\
+        .join(Tenant, Tenant.user_id == ReminderUser.id)\
         .filter(
-            and_(
-                Payment.status == PaymentStatus.PENDING,
-                Payment.due_date < today
-            )
+            Payment.status == PaymentStatus.PENDING
         ).all()
 
     # In production, this would send SMS/email notifications
     # For now, we just return the list of tenants who would receive reminders
     reminders_sent = []
     for payment, tenant in overdue_payments:
+        days_since = (today - payment.created_at.date()).days if payment.created_at else 0
         reminders_sent.append({
             "tenant_name": tenant.full_name,
             "phone": tenant.phone,
             "amount": float(payment.amount),
-            "days_overdue": (today - payment.due_date).days
+            "days_overdue": max(0, days_since - 30)
         })
 
     return {

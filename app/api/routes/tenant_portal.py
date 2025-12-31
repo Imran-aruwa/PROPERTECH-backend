@@ -65,16 +65,16 @@ def get_tenant_dashboard(
     if tenant.lease_end:
         lease_end_formatted = tenant.lease_end.strftime("%b %Y")
 
-    # Get recent payments
+    # Get recent payments (Payment uses user_id, not tenant_id)
     recent_payments = db.query(Payment)\
-        .filter(Payment.tenant_id == tenant.id)\
+        .filter(Payment.user_id == tenant.user_id)\
         .order_by(desc(Payment.created_at))\
         .limit(5)\
         .all()
 
     payment_list = []
     for p in recent_payments:
-        month_str = p.payment_date.strftime("%b %Y") if p.payment_date else "Pending"
+        month_str = p.paid_at.strftime("%b %Y") if p.paid_at else "Pending"
         payment_list.append({
             "id": str(p.id),
             "month": month_str,
@@ -291,7 +291,7 @@ def get_tenant_payments(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant profile not found")
 
     payments = db.query(Payment)\
-        .filter(Payment.tenant_id == tenant.id)\
+        .filter(Payment.user_id == tenant.user_id)\
         .order_by(desc(Payment.created_at))\
         .all()
 
@@ -303,12 +303,12 @@ def get_tenant_payments(
     for p in payments:
         payment_list.append({
             "id": str(p.id),
-            "type": p.payment_type.value if p.payment_type else "rent",
+            "type": p.plan_id or "rent",
             "amount": float(p.amount),
             "status": p.status.value,
-            "payment_date": p.payment_date.isoformat() if p.payment_date else None,
-            "due_date": p.due_date.isoformat() if p.due_date else None,
-            "reference": p.reference_number
+            "payment_date": p.paid_at.isoformat() if p.paid_at else None,
+            "due_date": p.created_at.isoformat() if p.created_at else None,
+            "reference": p.reference
         })
 
     return {
