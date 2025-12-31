@@ -203,6 +203,53 @@ def create_security_incident(
     }
 
 
+class IncidentUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    priority: Optional[str] = None
+
+
+@router.put("/incidents/{incident_id}")
+def update_security_incident(
+    incident_id: str,
+    incident_data: IncidentUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update a security incident"""
+    if current_user.role not in [UserRole.HEAD_SECURITY, UserRole.SECURITY_GUARD]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    incident = db.query(Incident).filter(Incident.id == incident_id).first()
+    if not incident:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
+
+    if incident_data.title is not None:
+        incident.title = incident_data.title
+    if incident_data.description is not None:
+        incident.description = incident_data.description
+    if incident_data.status is not None:
+        if incident_data.status == "resolved":
+            incident.resolved_at = datetime.utcnow()
+    if incident_data.priority is not None:
+        severity_map = {
+            "low": IncidentSeverity.LOW,
+            "medium": IncidentSeverity.MEDIUM,
+            "high": IncidentSeverity.HIGH,
+            "critical": IncidentSeverity.CRITICAL
+        }
+        incident.severity = severity_map.get(incident_data.priority.lower(), IncidentSeverity.MEDIUM)
+
+    db.commit()
+
+    return {
+        "success": True,
+        "message": "Incident updated successfully",
+        "id": str(incident.id)
+    }
+
+
 # ==================== ATTENDANCE ====================
 
 @router.get("/attendance")

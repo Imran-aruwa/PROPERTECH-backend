@@ -560,14 +560,65 @@ def get_maintenance_requests(
     """Get all maintenance requests"""
     if current_user.role != UserRole.CARETAKER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
+
     requests = db.query(MaintenanceRequest)\
         .order_by(desc(MaintenanceRequest.created_at))\
         .offset(skip)\
         .limit(limit)\
         .all()
-    
+
     return requests
+
+
+from pydantic import BaseModel as PydanticBaseModel
+
+class MaintenanceCreate(PydanticBaseModel):
+    issue: str
+    description: str
+    priority: str = "medium"
+    unit_id: Optional[str] = None
+
+
+@router.post("/maintenance")
+def create_maintenance_request(
+    maintenance_data: MaintenanceCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Create a new maintenance request"""
+    if current_user.role != UserRole.CARETAKER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    import uuid
+
+    # Map priority string to enum
+    priority_map = {
+        "low": MaintenancePriority.LOW,
+        "medium": MaintenancePriority.MEDIUM,
+        "high": MaintenancePriority.HIGH,
+        "urgent": MaintenancePriority.URGENT
+    }
+    priority = priority_map.get(maintenance_data.priority.lower(), MaintenancePriority.MEDIUM)
+
+    maintenance = MaintenanceRequest(
+        id=uuid.uuid4(),
+        title=maintenance_data.issue,
+        description=maintenance_data.description,
+        priority=priority,
+        status=MaintenanceStatus.PENDING,
+        unit_id=UUID(maintenance_data.unit_id) if maintenance_data.unit_id else None,
+        created_at=datetime.utcnow()
+    )
+
+    db.add(maintenance)
+    db.commit()
+    db.refresh(maintenance)
+
+    return {
+        "success": True,
+        "message": "Maintenance request created successfully",
+        "id": str(maintenance.id)
+    }
 
 
 @router.put("/maintenance/{maintenance_id}/status")
@@ -888,6 +939,73 @@ def get_caretaker_tasks(
         "in_progress": in_progress,
         "completed": completed,
         "tasks": task_list
+    }
+
+
+from pydantic import BaseModel
+from typing import Optional as Opt
+
+class CaretakerTaskUpdate(BaseModel):
+    status: Opt[str] = None
+    title: Opt[str] = None
+    description: Opt[str] = None
+
+
+@router.put("/tasks/{task_id}")
+def update_caretaker_task(
+    task_id: str,
+    task_data: CaretakerTaskUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update a task"""
+    if current_user.role != UserRole.CARETAKER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    from app.models.task import Task
+
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    if task_data.status is not None:
+        task.status = task_data.status
+    if task_data.title is not None:
+        task.title = task_data.title
+    if task_data.description is not None:
+        task.description = task_data.description
+
+    task.updated_at = datetime.utcnow()
+    db.commit()
+
+    return {
+        "success": True,
+        "message": "Task updated successfully",
+        "id": str(task.id),
+        "status": task.status
+    }
+
+
+@router.delete("/maintenance/{maintenance_id}")
+def delete_caretaker_maintenance(
+    maintenance_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete a maintenance request"""
+    if current_user.role != UserRole.CARETAKER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    maintenance = db.query(MaintenanceRequest).filter(MaintenanceRequest.id == maintenance_id).first()
+    if not maintenance:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Maintenance request not found")
+
+    db.delete(maintenance)
+    db.commit()
+
+    return {
+        "success": True,
+        "message": "Maintenance request deleted successfully"
     }
 
 

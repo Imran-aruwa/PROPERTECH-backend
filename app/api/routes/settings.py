@@ -216,6 +216,31 @@ def get_billing_info(
     }
 
 
+class BillingUpdate(BaseModel):
+    payment_method: Optional[str] = None
+    billing_address: Optional[str] = None
+
+
+@router.put("/billing")
+def update_billing_info(
+    billing_data: BillingUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update billing information"""
+    if billing_data.payment_method is not None:
+        current_user.payment_method = billing_data.payment_method
+
+    current_user.updated_at = datetime.utcnow()
+    db.commit()
+
+    return {
+        "success": True,
+        "message": "Billing information updated successfully",
+        "payment_method": current_user.payment_method
+    }
+
+
 # ==================== ACCOUNT DELETION ====================
 
 @router.delete("/account")

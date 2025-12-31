@@ -57,8 +57,155 @@ def get_all_staff(
     }
 
 
+# ==================== STAFF CRUD OPERATIONS ====================
+
+from pydantic import BaseModel
+import uuid
+
+class StaffCreate(BaseModel):
+    user_id: Optional[str] = None
+    position: str
+    department: str
+    salary: Optional[float] = None
+    property_id: Optional[str] = None
+
+class StaffUpdate(BaseModel):
+    position: Optional[str] = None
+    department: Optional[str] = None
+    salary: Optional[float] = None
+    property_id: Optional[str] = None
+
+
+@router.post("/")
+def create_staff(
+    staff_data: StaffCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Create a new staff member"""
+    if current_user.role not in [UserRole.OWNER, UserRole.ADMIN]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    staff = Staff(
+        id=uuid.uuid4(),
+        user_id=UUID(staff_data.user_id) if staff_data.user_id else None,
+        position=staff_data.position,
+        department=staff_data.department,
+        salary=staff_data.salary,
+        property_id=UUID(staff_data.property_id) if staff_data.property_id else None,
+        start_date=datetime.utcnow().date()
+    )
+
+    db.add(staff)
+    db.commit()
+    db.refresh(staff)
+
+    return {
+        "success": True,
+        "message": "Staff member created successfully",
+        "staff": {
+            "id": str(staff.id),
+            "position": staff.position,
+            "department": staff.department
+        }
+    }
+
+
+@router.get("/{staff_id}")
+def get_staff_by_id(
+    staff_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get a specific staff member by ID"""
+    allowed_roles = [UserRole.OWNER, UserRole.CARETAKER, UserRole.HEAD_SECURITY, UserRole.HEAD_GARDENER, UserRole.ADMIN]
+    if current_user.role not in allowed_roles:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    staff = db.query(Staff).filter(Staff.id == staff_id).first()
+    if not staff:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Staff member not found")
+
+    return {
+        "success": True,
+        "staff": {
+            "id": str(staff.id),
+            "user_id": str(staff.user_id) if staff.user_id else None,
+            "name": staff.user.full_name if staff.user else "Unknown",
+            "email": staff.user.email if staff.user else "N/A",
+            "position": staff.position,
+            "department": staff.department,
+            "salary": float(staff.salary) if staff.salary else 0,
+            "start_date": staff.start_date.isoformat() if staff.start_date else None,
+            "property_id": str(staff.property_id) if staff.property_id else None
+        }
+    }
+
+
+@router.put("/{staff_id}")
+def update_staff(
+    staff_id: str,
+    staff_data: StaffUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update a staff member"""
+    if current_user.role not in [UserRole.OWNER, UserRole.ADMIN]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    staff = db.query(Staff).filter(Staff.id == staff_id).first()
+    if not staff:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Staff member not found")
+
+    if staff_data.position is not None:
+        staff.position = staff_data.position
+    if staff_data.department is not None:
+        staff.department = staff_data.department
+    if staff_data.salary is not None:
+        staff.salary = staff_data.salary
+    if staff_data.property_id is not None:
+        staff.property_id = UUID(staff_data.property_id)
+
+    db.commit()
+    db.refresh(staff)
+
+    return {
+        "success": True,
+        "message": "Staff member updated successfully",
+        "staff": {
+            "id": str(staff.id),
+            "position": staff.position,
+            "department": staff.department
+        }
+    }
+
+
+@router.delete("/{staff_id}")
+def delete_staff(
+    staff_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete a staff member"""
+    if current_user.role not in [UserRole.OWNER, UserRole.ADMIN]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    staff = db.query(Staff).filter(Staff.id == staff_id).first()
+    if not staff:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Staff member not found")
+
+    db.delete(staff)
+    db.commit()
+
+    return {
+        "success": True,
+        "message": "Staff member deleted successfully"
+    }
+
+
 # ==================== ATTENDANCE ====================
 
+@router.post("/attendance/check-in")
 @router.post("/check-in")
 def check_in(
     current_user: User = Depends(get_current_user),
@@ -97,6 +244,7 @@ def check_in(
     }
 
 
+@router.post("/attendance/check-out")
 @router.post("/check-out")
 def check_out(
     current_user: User = Depends(get_current_user),
@@ -408,10 +556,16 @@ def get_tasks(
     }
 
 
+class TaskUpdate(BaseModel):
+    status: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+
+
 @router.put("/tasks/{task_id}/status")
 def update_task_status(
     task_id: int,
-    status: TaskStatus,
+    task_status: TaskStatus,
     notes: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -420,24 +574,65 @@ def update_task_status(
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
-    
+
     # Verify authorization
     if current_user.role in [UserRole.SECURITY_GUARD, UserRole.GARDENER]:
         if task.assigned_to != current_user.id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     elif current_user.role not in [UserRole.HEAD_SECURITY, UserRole.HEAD_GARDENER, UserRole.CARETAKER]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
-    task.status = status
-    if status == TaskStatus.COMPLETED:
+
+    task.status = task_status
+    if task_status == TaskStatus.COMPLETED:
         task.completed_at = datetime.utcnow()
-    
+
     db.commit()
-    
+
     return {
         "success": True,
         "task_id": task_id,
-        "status": status,
+        "status": task_status,
+        "updated_at": datetime.utcnow().isoformat()
+    }
+
+
+@router.put("/tasks/{task_id}")
+def update_task(
+    task_id: int,
+    task_data: TaskUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update a task (simple PUT endpoint)"""
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    # Verify authorization
+    if current_user.role in [UserRole.SECURITY_GUARD, UserRole.GARDENER]:
+        if task.assigned_to != current_user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    elif current_user.role not in [UserRole.HEAD_SECURITY, UserRole.HEAD_GARDENER, UserRole.CARETAKER]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    if task_data.status is not None:
+        try:
+            task.status = TaskStatus(task_data.status)
+            if task.status == TaskStatus.COMPLETED:
+                task.completed_at = datetime.utcnow()
+        except ValueError:
+            pass
+    if task_data.title is not None:
+        task.title = task_data.title
+    if task_data.description is not None:
+        task.description = task_data.description
+
+    db.commit()
+
+    return {
+        "success": True,
+        "task_id": task_id,
+        "status": task.status.value if task.status else None,
         "updated_at": datetime.utcnow().isoformat()
     }
 
@@ -570,4 +765,42 @@ def get_staff_maintenance(
         "in_progress": in_progress,
         "completed": completed,
         "requests": request_list
+    }
+
+
+class MaintenanceUpdate(BaseModel):
+    status: Optional[str] = None
+
+
+@router.put("/maintenance/{request_id}")
+def update_maintenance_request(
+    request_id: str,
+    maintenance_data: MaintenanceUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update a maintenance request status"""
+    if current_user.role not in [UserRole.HEAD_SECURITY, UserRole.HEAD_GARDENER, UserRole.SECURITY_GUARD, UserRole.GARDENER, UserRole.CARETAKER]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    from app.models.maintenance import MaintenanceRequest, MaintenanceStatus
+
+    maintenance = db.query(MaintenanceRequest).filter(MaintenanceRequest.id == request_id).first()
+    if not maintenance:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Maintenance request not found")
+
+    if maintenance_data.status is not None:
+        try:
+            maintenance.status = MaintenanceStatus(maintenance_data.status)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid status")
+
+    maintenance.updated_at = datetime.utcnow()
+    db.commit()
+
+    return {
+        "success": True,
+        "message": "Maintenance request updated successfully",
+        "id": str(maintenance.id),
+        "status": maintenance.status.value if maintenance.status else None
     }

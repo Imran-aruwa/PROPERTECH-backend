@@ -172,10 +172,75 @@ def delete_unit(
         .join(Property)\
         .filter(Unit.id == unit_id, Property.user_id == current_user.id)\
         .first()
-    
+
     if not unit:
         raise HTTPException(status_code=404, detail="Unit not found")
-    
+
     db.delete(unit)
     db.commit()
     return None
+
+
+@router.get("/units", response_model=List[UnitResponse])
+@router.get("/units/", response_model=List[UnitResponse])
+def list_all_units(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all units for current user's properties"""
+    properties = db.query(Property)\
+        .filter(Property.user_id == current_user.id)\
+        .all()
+
+    property_ids = [p.id for p in properties]
+    units = db.query(Unit).filter(Unit.property_id.in_(property_ids)).all()
+    return units
+
+
+@router.get("/units/{unit_id}", response_model=UnitResponse)
+def get_unit(
+    unit_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get a specific unit by ID"""
+    unit = db.query(Unit)\
+        .join(Property)\
+        .filter(Unit.id == unit_id, Property.user_id == current_user.id)\
+        .first()
+
+    if not unit:
+        raise HTTPException(status_code=404, detail="Unit not found")
+    return unit
+
+
+@router.put("/{property_id}/units/{unit_id}", response_model=UnitResponse)
+def update_unit_with_property(
+    property_id: UUID,
+    unit_id: UUID,
+    unit_update: UnitUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Update a unit (alternative path with property_id)"""
+    # Verify property ownership
+    property = db.query(Property)\
+        .filter(Property.id == property_id, Property.user_id == current_user.id)\
+        .first()
+
+    if not property:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    unit = db.query(Unit)\
+        .filter(Unit.id == unit_id, Unit.property_id == property_id)\
+        .first()
+
+    if not unit:
+        raise HTTPException(status_code=404, detail="Unit not found")
+
+    for key, value in unit_update.dict(exclude_unset=True).items():
+        setattr(unit, key, value)
+
+    db.commit()
+    db.refresh(unit)
+    return unit

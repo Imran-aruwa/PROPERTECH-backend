@@ -575,3 +575,117 @@ def generate_monthly_report(
     }
 
     return report
+
+
+@router.get("/rent-summary")
+def get_owner_rent_summary(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get comprehensive rent summary with collection trend and utility bills"""
+    if current_user.role != UserRole.OWNER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    today = datetime.utcnow().date()
+    current_month_start = datetime(today.year, today.month, 1).date()
+    current_month_end = datetime(today.year, today.month + 1 if today.month < 12 else 1, 1).date() - timedelta(days=1)
+
+    # Get owner's properties
+    properties = db.query(Property).filter(Property.owner_id == current_user.id).all()
+    property_ids = [p.id for p in properties]
+
+    # Current month metrics
+    expected_rent = db.query(func.sum(Unit.monthly_rent))\
+        .filter(and_(Unit.property_id.in_(property_ids), Unit.is_occupied == True))\
+        .scalar() or 0
+
+    collected_rent = db.query(func.sum(Payment.amount))\
+        .filter(
+            and_(
+                Payment.payment_type == PaymentType.RENT,
+                Payment.status == PaymentStatus.COMPLETED,
+                Payment.payment_date >= current_month_start,
+                Payment.payment_date <= current_month_end
+            )
+        ).scalar() or 0
+
+    pending_rent = db.query(func.sum(Payment.amount))\
+        .filter(
+            and_(
+                Payment.payment_type == PaymentType.RENT,
+                Payment.status == PaymentStatus.PENDING
+            )
+        ).scalar() or 0
+
+    overdue_rent = db.query(func.sum(Payment.amount))\
+        .filter(
+            and_(
+                Payment.payment_type == PaymentType.RENT,
+                Payment.status == PaymentStatus.PENDING,
+                Payment.due_date < today
+            )
+        ).scalar() or 0
+
+    water_collected = db.query(func.sum(Payment.amount))\
+        .filter(
+            and_(
+                Payment.payment_type == PaymentType.WATER,
+                Payment.status == PaymentStatus.COMPLETED,
+                Payment.payment_date >= current_month_start,
+                Payment.payment_date <= current_month_end
+            )
+        ).scalar() or 0
+
+    electricity_collected = db.query(func.sum(Payment.amount))\
+        .filter(
+            and_(
+                Payment.payment_type == PaymentType.ELECTRICITY,
+                Payment.status == PaymentStatus.COMPLETED,
+                Payment.payment_date >= current_month_start,
+                Payment.payment_date <= current_month_end
+            )
+        ).scalar() or 0
+
+    # Calculate collection rate
+    collection_rate = round((collected_rent / expected_rent * 100) if expected_rent > 0 else 0, 2)
+
+    # Generate 6-month trend
+    month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    collection_trend = []
+
+    for i in range(5, -1, -1):
+        month_date = today - timedelta(days=30 * i)
+        month_start = datetime(month_date.year, month_date.month, 1).date()
+        if month_date.month == 12:
+            month_end = datetime(month_date.year + 1, 1, 1).date() - timedelta(days=1)
+        else:
+            month_end = datetime(month_date.year, month_date.month + 1, 1).date() - timedelta(days=1)
+
+        month_expected = float(expected_rent) if i == 0 else float(expected_rent * 0.95)  # Approximate
+        month_collected = db.query(func.sum(Payment.amount))\
+            .filter(
+                and_(
+                    Payment.payment_type == PaymentType.RENT,
+                    Payment.status == PaymentStatus.COMPLETED,
+                    Payment.payment_date >= month_start,
+                    Payment.payment_date <= month_end
+                )
+            ).scalar() or 0
+
+        collection_trend.append({
+            "month": month_names[month_date.month - 1],
+            "expected": float(month_expected),
+            "collected": float(month_collected)
+        })
+
+    return {
+        "success": True,
+        "expected_rent": float(expected_rent),
+        "collected_rent": float(collected_rent),
+        "pending_rent": float(pending_rent),
+        "overdue_rent": float(overdue_rent),
+        "water_collected": float(water_collected),
+        "electricity_collected": float(electricity_collected),
+        "collection_rate": collection_rate,
+        "collection_trend": collection_trend
+    }

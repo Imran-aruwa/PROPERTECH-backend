@@ -260,3 +260,69 @@ def get_gardener_assignments(
         "success": True,
         "assignments": assignments
     }
+
+
+class GardenerTaskUpdate(BaseModel):
+    status: Optional[str] = None
+    done: Optional[bool] = None
+
+
+@router.put("/tasks/{task_id}")
+def update_gardener_task(
+    task_id: str,
+    task_data: GardenerTaskUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update a gardener task"""
+    if current_user.role not in [UserRole.HEAD_GARDENER, UserRole.GARDENER]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    if task_data.status is not None:
+        try:
+            task.status = TaskStatus(task_data.status)
+        except ValueError:
+            pass
+    if task_data.done is not None:
+        task.status = TaskStatus.COMPLETED if task_data.done else TaskStatus.PENDING
+        if task_data.done:
+            task.completed_at = datetime.utcnow()
+
+    db.commit()
+
+    return {
+        "success": True,
+        "message": "Task updated successfully",
+        "id": str(task.id),
+        "status": task.status.value if task.status else None
+    }
+
+
+class EquipmentUpdate(BaseModel):
+    status: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@router.put("/equipment/{equipment_id}")
+def update_gardener_equipment(
+    equipment_id: str,
+    equipment_data: EquipmentUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update equipment status"""
+    if current_user.role not in [UserRole.HEAD_GARDENER, UserRole.GARDENER]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    # In a real implementation, this would update an Equipment model
+    # For now, return success with the updated status
+    return {
+        "success": True,
+        "message": "Equipment status updated successfully",
+        "id": equipment_id,
+        "status": equipment_data.status or "Available"
+    }

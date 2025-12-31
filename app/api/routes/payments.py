@@ -289,6 +289,39 @@ async def payment_history(
     }
 
 
+@router.get("/{payment_id}")
+async def get_payment_details(
+    payment_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """
+    Get details for a specific payment
+    """
+    payment = db.query(Payment)\
+        .filter(Payment.id == payment_id)\
+        .filter(Payment.user_id == current_user.id)\
+        .first()
+
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+
+    return {
+        "success": True,
+        "payment": {
+            "id": str(payment.id),
+            "amount": payment.amount,
+            "currency": payment.currency,
+            "gateway": payment.gateway,
+            "status": payment.status,
+            "payment_type": payment.payment_type.value if payment.payment_type else None,
+            "reference": payment.reference,
+            "created_at": payment.created_at.isoformat() if payment.created_at else None,
+            "payment_date": payment.payment_date.isoformat() if payment.payment_date else None
+        }
+    }
+
+
 @router.get("/subscriptions")
 async def get_subscriptions(
     db: Session = Depends(get_db),
