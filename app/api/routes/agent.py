@@ -109,6 +109,46 @@ def get_agent_dashboard(
     }
 
 
+@router.get("/activities")
+def get_agent_activities(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    limit: int = 20
+):
+    """Get recent agent activities"""
+    if current_user.role != UserRole.AGENT:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    activities = []
+
+    # Recent payments
+    recent_payments = db.query(Payment)\
+        .order_by(desc(Payment.created_at))\
+        .limit(limit)\
+        .all()
+
+    for p in recent_payments:
+        tenant = db.query(Tenant).filter(Tenant.id == p.tenant_id).first()
+        activities.append({
+            "id": str(p.id),
+            "type": "payment",
+            "description": f"Payment of KES {p.amount:,.0f} received" if p.status == PaymentStatus.COMPLETED else f"Payment of KES {p.amount:,.0f} pending",
+            "tenant": tenant.full_name if tenant else "Unknown",
+            "amount": float(p.amount),
+            "status": p.status.value,
+            "timestamp": p.created_at.isoformat() if p.created_at else None
+        })
+
+    # Sort by timestamp
+    activities.sort(key=lambda x: x.get("timestamp") or "", reverse=True)
+
+    return {
+        "success": True,
+        "total": len(activities),
+        "activities": activities[:limit]
+    }
+
+
 @router.get("/earnings")
 def get_agent_earnings(
     current_user: User = Depends(get_current_user),

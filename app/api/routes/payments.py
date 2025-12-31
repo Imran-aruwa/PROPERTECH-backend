@@ -485,3 +485,94 @@ async def update_payment(
         "payment_id": str(payment.id),
         "status": payment.status.value
     }
+
+
+# Create a v1 router for legacy endpoint compatibility
+from fastapi import APIRouter as FastAPIRouter
+v1_router = FastAPIRouter(tags=["v1-payments"])
+
+
+@v1_router.post("/subscriptions/activate-free")
+async def activate_free_subscription(
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """
+    Activate a free trial subscription for the user
+    """
+    # Check if user already has an active subscription
+    existing = db.query(Subscription)\
+        .filter(Subscription.user_id == current_user.id)\
+        .filter(Subscription.status == SubscriptionStatus.ACTIVE)\
+        .first()
+
+    if existing:
+        return {
+            "success": True,
+            "message": "You already have an active subscription",
+            "subscription_id": str(existing.id)
+        }
+
+    # Create a free trial subscription
+    subscription = Subscription(
+        id=uuid.uuid4(),
+        user_id=current_user.id,
+        plan="free_trial",
+        status=SubscriptionStatus.ACTIVE,
+        currency="KES",
+        billing_cycle="monthly",
+        amount=0,
+        gateway="free",
+        start_date=datetime.utcnow(),
+        next_billing_date=datetime.utcnow() + timedelta(days=14)  # 14-day free trial
+    )
+
+    db.add(subscription)
+    db.commit()
+    db.refresh(subscription)
+
+    return {
+        "success": True,
+        "message": "Free trial activated successfully",
+        "subscription": {
+            "id": str(subscription.id),
+            "plan": subscription.plan,
+            "status": subscription.status.value,
+            "trial_ends": subscription.next_billing_date.isoformat()
+        }
+    }
+
+
+@v1_router.post("/payments/verify")
+async def verify_payment_v1(
+    reference: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """
+    Verify payment - v1 API compatibility endpoint
+    """
+    # This is an alias for the main verify endpoint
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{PAYSTACK_BASE_URL}/transaction/verify/{reference}",
+                headers={"Authorization": f"Bearer {PAYSTACK_SECRET_KEY}"}
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("data", {}).get("status") == "success":
+                    return {
+                        "success": True,
+                        "message": "Payment verified successfully",
+                        "data": data.get("data")
+                    }
+
+        return {
+            "success": False,
+            "message": "Payment verification failed"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))

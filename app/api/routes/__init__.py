@@ -1,5 +1,5 @@
 from app.api.routes.auth import router as auth_router
-from app.api.routes.payments import router as payments_router
+from app.api.routes.payments import router as payments_router, v1_router as v1_payments_router
 from app.api.routes.properties import router as properties_router
 from app.api.routes.tenants import router as tenants_router
 from app.api.routes.caretaker import router as caretaker_router
@@ -15,6 +15,7 @@ from app.api.routes.admin import router as admin_router
 __all__ = [
     "auth_router",
     "payments_router",
+    "v1_payments_router",
     "properties_router",
     "tenants_router",
     "caretaker_router",

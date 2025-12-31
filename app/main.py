@@ -18,6 +18,7 @@ import sys
 from app.api.routes import (
     auth_router,
     payments_router,
+    v1_payments_router,
     properties_router,
     tenants_router,
     caretaker_router,
@@ -137,6 +138,9 @@ app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])
 app.include_router(staff_security_router, prefix="/api/staff/security", tags=["Security Staff"])
 app.include_router(staff_gardener_router, prefix="/api/staff/gardener", tags=["Gardener Staff"])
 app.include_router(admin_router, prefix="/api/admin", tags=["Admin"])
+
+# V1 API compatibility endpoints
+app.include_router(v1_payments_router, prefix="/api/v1", tags=["V1 API"])
 
 
 # ==================== ERROR HANDLERS ====================

@@ -495,3 +495,92 @@ def get_system_stats(
             "monthly_revenue": float(total_revenue)
         }
     }
+
+
+# ==================== REPORT GENERATION ====================
+
+@router.post("/reports/generate")
+def generate_admin_report(
+    report_type: str = "revenue-summary",
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Generate a new admin report"""
+    verify_admin(current_user)
+
+    today = datetime.utcnow().date()
+    current_month_start = datetime(today.year, today.month, 1).date()
+
+    # Generate comprehensive report based on type
+    report_data = {}
+
+    if report_type == "revenue-summary":
+        rent_collected = db.query(func.sum(Payment.amount))\
+            .filter(
+                and_(
+                    Payment.payment_type == PaymentType.RENT,
+                    Payment.status == PaymentStatus.COMPLETED,
+                    Payment.payment_date >= current_month_start
+                )
+            ).scalar() or 0
+
+        water_collected = db.query(func.sum(Payment.amount))\
+            .filter(
+                and_(
+                    Payment.payment_type == PaymentType.WATER,
+                    Payment.status == PaymentStatus.COMPLETED,
+                    Payment.payment_date >= current_month_start
+                )
+            ).scalar() or 0
+
+        electricity_collected = db.query(func.sum(Payment.amount))\
+            .filter(
+                and_(
+                    Payment.payment_type == PaymentType.ELECTRICITY,
+                    Payment.status == PaymentStatus.COMPLETED,
+                    Payment.payment_date >= current_month_start
+                )
+            ).scalar() or 0
+
+        report_data = {
+            "rent_collected": float(rent_collected),
+            "water_collected": float(water_collected),
+            "electricity_collected": float(electricity_collected),
+            "total_revenue": float(rent_collected + water_collected + electricity_collected)
+        }
+
+    elif report_type == "full-system":
+        # Comprehensive system report
+        total_users = db.query(User).count()
+        total_properties = db.query(Property).count()
+        total_units = db.query(Unit).count()
+        occupied_units = db.query(Unit).filter(Unit.is_occupied == True).count()
+        total_tenants = db.query(Tenant).filter(Tenant.status == "active").count()
+
+        total_revenue = db.query(func.sum(Payment.amount))\
+            .filter(
+                and_(
+                    Payment.status == PaymentStatus.COMPLETED,
+                    Payment.payment_date >= current_month_start
+                )
+            ).scalar() or 0
+
+        report_data = {
+            "users": total_users,
+            "properties": total_properties,
+            "units": {"total": total_units, "occupied": occupied_units},
+            "tenants": total_tenants,
+            "monthly_revenue": float(total_revenue)
+        }
+
+    return {
+        "success": True,
+        "message": "Report generated successfully",
+        "report": {
+            "id": f"admin-report-{today.isoformat()}",
+            "type": report_type,
+            "generated_at": datetime.utcnow().isoformat(),
+            "generated_by": current_user.full_name,
+            "data": report_data
+        }
+    }

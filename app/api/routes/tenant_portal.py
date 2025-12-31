@@ -242,3 +242,115 @@ def get_tenant_documents(
         "success": True,
         "documents": documents
     }
+
+
+@router.get("/documents/{document_id}/download")
+def download_tenant_document(
+    document_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get download URL for a document"""
+    if current_user.role != UserRole.TENANT:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    tenant = db.query(Tenant).filter(Tenant.user_id == current_user.id).first()
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant profile not found")
+
+    # Map document IDs to URLs
+    doc_map = {
+        "lease-agreement": tenant.lease_agreement_url,
+        "id-front": tenant.id_front_url,
+        "id-back": tenant.id_back_url
+    }
+
+    url = doc_map.get(document_id)
+    if not url:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    return {
+        "success": True,
+        "download_url": url
+    }
+
+
+# ==================== PAYMENTS ====================
+
+@router.get("/payments")
+def get_tenant_payments(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get payment history for tenant"""
+    if current_user.role != UserRole.TENANT:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    tenant = db.query(Tenant).filter(Tenant.user_id == current_user.id).first()
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant profile not found")
+
+    payments = db.query(Payment)\
+        .filter(Payment.tenant_id == tenant.id)\
+        .order_by(desc(Payment.created_at))\
+        .all()
+
+    # Calculate totals
+    total_paid = sum(p.amount for p in payments if p.status == PaymentStatus.COMPLETED)
+    total_pending = sum(p.amount for p in payments if p.status == PaymentStatus.PENDING)
+
+    payment_list = []
+    for p in payments:
+        payment_list.append({
+            "id": str(p.id),
+            "type": p.payment_type.value if p.payment_type else "rent",
+            "amount": float(p.amount),
+            "status": p.status.value,
+            "payment_date": p.payment_date.isoformat() if p.payment_date else None,
+            "due_date": p.due_date.isoformat() if p.due_date else None,
+            "reference": p.reference_number
+        })
+
+    return {
+        "success": True,
+        "total_paid": float(total_paid),
+        "total_pending": float(total_pending),
+        "payments": payment_list
+    }
+
+
+# ==================== LEASE ====================
+
+@router.get("/lease")
+def get_tenant_lease(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get tenant lease information"""
+    if current_user.role != UserRole.TENANT:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    tenant = db.query(Tenant).filter(Tenant.user_id == current_user.id).first()
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant profile not found")
+
+    unit = db.query(Unit).filter(Unit.id == tenant.unit_id).first()
+    prop = db.query(Property).filter(Property.id == unit.property_id).first() if unit else None
+
+    return {
+        "success": True,
+        "lease": {
+            "tenant_name": tenant.full_name,
+            "unit_number": unit.unit_number if unit else None,
+            "property_name": prop.name if prop else None,
+            "property_address": prop.address if prop else None,
+            "rent_amount": float(unit.monthly_rent) if unit else 0,
+            "deposit_amount": float(tenant.deposit_amount) if tenant.deposit_amount else 0,
+            "lease_start": tenant.lease_start.isoformat() if tenant.lease_start else None,
+            "lease_end": tenant.lease_end.isoformat() if tenant.lease_end else None,
+            "lease_duration_months": tenant.lease_duration_months,
+            "status": tenant.status,
+            "move_in_date": tenant.move_in_date.isoformat() if tenant.move_in_date else None,
+            "document_url": tenant.lease_agreement_url
+        }
+    }
