@@ -526,3 +526,48 @@ def get_performance_metrics(
             "average_hours_per_day": round(sum([r.hours_worked or 0 for r in records]) / len(records) if records else 0, 2)
         }
     }
+
+
+# ==================== MAINTENANCE (FOR STAFF) ====================
+
+@router.get("/maintenance")
+def get_staff_maintenance(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get maintenance requests assigned to or visible by staff"""
+    if current_user.role not in [UserRole.HEAD_SECURITY, UserRole.HEAD_GARDENER, UserRole.SECURITY_GUARD, UserRole.GARDENER, UserRole.CARETAKER]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    from app.models.maintenance import MaintenanceRequest, MaintenanceStatus
+
+    # Get maintenance requests
+    requests = db.query(MaintenanceRequest).order_by(desc(MaintenanceRequest.created_at)).all()
+
+    # Calculate stats
+    total = len(requests)
+    pending = len([r for r in requests if r.status == MaintenanceStatus.PENDING])
+    in_progress = len([r for r in requests if r.status == MaintenanceStatus.IN_PROGRESS])
+    completed = len([r for r in requests if r.status == MaintenanceStatus.COMPLETED])
+
+    request_list = []
+    for req in requests:
+        request_list.append({
+            "id": str(req.id),
+            "title": req.title,
+            "description": req.description,
+            "status": req.status.value if req.status else "pending",
+            "priority": req.priority.value if req.priority else "medium",
+            "unit_id": str(req.unit_id) if req.unit_id else None,
+            "created_at": req.created_at.isoformat() if req.created_at else None,
+            "updated_at": req.updated_at.isoformat() if req.updated_at else None
+        })
+
+    return {
+        "success": True,
+        "total": total,
+        "pending": pending,
+        "in_progress": in_progress,
+        "completed": completed,
+        "requests": request_list
+    }

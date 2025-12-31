@@ -16,6 +16,7 @@ from app.models.tenant import Tenant
 from app.models.payment import Payment, PaymentStatus, PaymentType
 from app.models.meter import MeterReading
 from app.models.lead import Lead, LeadStatus
+from app.models.viewing import Viewing, ViewingStatus
 from pydantic import BaseModel
 
 router = APIRouter(tags=["agent"])
@@ -598,5 +599,156 @@ def update_lead_status(
         "success": True,
         "message": f"Lead status updated to {new_status.value}",
         "lead_id": str(lead.id),
+        "status": new_status.value
+    }
+
+
+# ============================================================================
+# VIEWINGS ENDPOINTS
+# ============================================================================
+
+class ViewingCreate(BaseModel):
+    property_id: str
+    unit_id: Optional[str] = None
+    client_name: str
+    client_phone: str
+    client_email: Optional[str] = None
+    viewing_date: datetime
+    notes: Optional[str] = None
+
+
+@router.get("/viewings")
+def get_agent_viewings(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all viewings for agent"""
+    if current_user.role != UserRole.AGENT:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    viewings = db.query(Viewing).filter(
+        Viewing.agent_id == current_user.id
+    ).order_by(desc(Viewing.viewing_date)).all()
+
+    # Calculate stats
+    total = len(viewings)
+    scheduled = len([v for v in viewings if v.status == ViewingStatus.SCHEDULED])
+    completed = len([v for v in viewings if v.status == ViewingStatus.COMPLETED])
+    cancelled = len([v for v in viewings if v.status == ViewingStatus.CANCELLED])
+
+    viewing_list = []
+    for v in viewings:
+        prop = db.query(Property).filter(Property.id == v.property_id).first()
+        unit = db.query(Unit).filter(Unit.id == v.unit_id).first() if v.unit_id else None
+
+        viewing_list.append({
+            "id": str(v.id),
+            "property_id": str(v.property_id),
+            "property_name": prop.name if prop else "Unknown",
+            "unit_id": str(v.unit_id) if v.unit_id else None,
+            "unit_number": unit.unit_number if unit else None,
+            "client_name": v.client_name,
+            "client_phone": v.client_phone,
+            "client_email": v.client_email,
+            "viewing_date": v.viewing_date.isoformat() if v.viewing_date else None,
+            "status": v.status.value,
+            "notes": v.notes,
+            "feedback": v.feedback,
+            "created_at": v.created_at.isoformat() if v.created_at else None
+        })
+
+    return {
+        "success": True,
+        "total": total,
+        "scheduled": scheduled,
+        "completed": completed,
+        "cancelled": cancelled,
+        "viewings": viewing_list
+    }
+
+
+@router.post("/viewings")
+def create_viewing(
+    viewing_data: ViewingCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Schedule a new property viewing"""
+    if current_user.role != UserRole.AGENT:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    import uuid
+
+    new_viewing = Viewing(
+        id=uuid.uuid4(),
+        agent_id=current_user.id,
+        property_id=viewing_data.property_id,
+        unit_id=viewing_data.unit_id,
+        client_name=viewing_data.client_name,
+        client_phone=viewing_data.client_phone,
+        client_email=viewing_data.client_email,
+        viewing_date=viewing_data.viewing_date,
+        notes=viewing_data.notes,
+        status=ViewingStatus.SCHEDULED
+    )
+
+    db.add(new_viewing)
+    db.commit()
+    db.refresh(new_viewing)
+
+    return {
+        "success": True,
+        "message": "Viewing scheduled successfully",
+        "viewing": {
+            "id": str(new_viewing.id),
+            "property_id": str(new_viewing.property_id),
+            "client_name": new_viewing.client_name,
+            "viewing_date": new_viewing.viewing_date.isoformat(),
+            "status": new_viewing.status.value
+        }
+    }
+
+
+class ViewingStatusUpdate(BaseModel):
+    status: str
+    feedback: Optional[str] = None
+
+
+@router.patch("/viewings/{viewing_id}")
+def update_viewing_status(
+    viewing_id: str,
+    update_data: ViewingStatusUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update viewing status"""
+    if current_user.role != UserRole.AGENT:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    viewing = db.query(Viewing).filter(
+        and_(Viewing.id == viewing_id, Viewing.agent_id == current_user.id)
+    ).first()
+
+    if not viewing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Viewing not found")
+
+    try:
+        new_status = ViewingStatus(update_data.status.lower())
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid status. Must be one of: {[s.value for s in ViewingStatus]}"
+        )
+
+    viewing.status = new_status
+    if update_data.feedback:
+        viewing.feedback = update_data.feedback
+
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"Viewing status updated to {new_status.value}",
+        "viewing_id": str(viewing.id),
         "status": new_status.value
     }

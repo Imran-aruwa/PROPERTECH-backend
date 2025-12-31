@@ -10,6 +10,7 @@ from app.api.routes.tenant_portal import router as tenant_portal_router
 from app.api.routes.settings import router as settings_router
 from app.api.routes.staff_security import router as staff_security_router
 from app.api.routes.staff_gardener import router as staff_gardener_router
+from app.api.routes.admin import router as admin_router
 
 __all__ = [
     "auth_router",
@@ -23,5 +24,6 @@ __all__ = [
     "tenant_portal_router",
     "settings_router",
     "staff_security_router",
-    "staff_gardener_router"
+    "staff_gardener_router",
+    "admin_router"
 ]

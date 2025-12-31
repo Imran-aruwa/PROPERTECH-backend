@@ -50,6 +50,12 @@ except ImportError:
     Lead = None
     LeadStatus = None
 
+try:
+    from app.models.viewing import Viewing, ViewingStatus
+except ImportError:
+    Viewing = None
+    ViewingStatus = None
+
 __all__ = [
     "User",
     "UserRole",

@@ -808,5 +808,234 @@ def get_monthly_report(
             "collection_rate": round((collected_rent / expected_rent * 100) if expected_rent > 0 else 0, 2)
         }
     }
-    
+
     return report
+
+
+# ==================== CARETAKER PROPERTIES ====================
+
+@router.get("/properties")
+def get_caretaker_properties(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all properties assigned to caretaker"""
+    if current_user.role != UserRole.CARETAKER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    properties = db.query(Property).all()
+
+    property_list = []
+    for prop in properties:
+        units = db.query(Unit).filter(Unit.property_id == prop.id).all()
+        occupied = len([u for u in units if u.is_occupied])
+        total_units = len(units)
+
+        property_list.append({
+            "id": str(prop.id),
+            "name": prop.name,
+            "address": prop.address,
+            "total_units": total_units,
+            "occupied_units": occupied,
+            "vacant_units": total_units - occupied,
+            "occupancy_rate": round((occupied / total_units * 100) if total_units > 0 else 0, 2)
+        })
+
+    return {
+        "success": True,
+        "total_properties": len(properties),
+        "properties": property_list
+    }
+
+
+# ==================== CARETAKER TASKS ====================
+
+@router.get("/tasks")
+def get_caretaker_tasks(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all tasks for caretaker"""
+    if current_user.role != UserRole.CARETAKER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    from app.models.task import Task
+
+    tasks = db.query(Task).order_by(desc(Task.created_at)).all()
+
+    # Calculate stats
+    total = len(tasks)
+    pending = len([t for t in tasks if t.status == "pending"])
+    in_progress = len([t for t in tasks if t.status == "in_progress"])
+    completed = len([t for t in tasks if t.status == "completed"])
+
+    task_list = []
+    for task in tasks:
+        task_list.append({
+            "id": str(task.id),
+            "title": task.title,
+            "description": task.description,
+            "status": task.status,
+            "priority": task.priority,
+            "due_date": task.due_date.isoformat() if task.due_date else None,
+            "created_at": task.created_at.isoformat() if task.created_at else None
+        })
+
+    return {
+        "success": True,
+        "total": total,
+        "pending": pending,
+        "in_progress": in_progress,
+        "completed": completed,
+        "tasks": task_list
+    }
+
+
+# ==================== CARETAKER REPORTS ====================
+
+@router.get("/reports")
+def get_caretaker_reports(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get list of available reports"""
+    if current_user.role != UserRole.CARETAKER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    # Generate list of available monthly reports (last 12 months)
+    reports = []
+    today = datetime.utcnow()
+
+    for i in range(12):
+        month_date = today - timedelta(days=30 * i)
+        month_start = datetime(month_date.year, month_date.month, 1)
+
+        reports.append({
+            "id": f"report-{month_date.year}-{month_date.month:02d}",
+            "title": f"Monthly Report - {month_date.strftime('%B %Y')}",
+            "type": "monthly",
+            "period": f"{month_date.strftime('%B %Y')}",
+            "generated_at": month_start.isoformat(),
+            "status": "available"
+        })
+
+    return {
+        "success": True,
+        "total_reports": len(reports),
+        "reports": reports
+    }
+
+
+# ==================== RENT SUMMARY ====================
+
+@router.get("/rent-summary")
+def get_rent_summary(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get comprehensive rent summary with collection trend and utility bills"""
+    if current_user.role != UserRole.CARETAKER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    today = datetime.utcnow().date()
+    current_month_start = datetime(today.year, today.month, 1).date()
+
+    # Get all properties
+    properties = db.query(Property).all()
+    property_ids = [p.id for p in properties]
+
+    # Current month metrics
+    expected_rent = db.query(func.sum(Unit.monthly_rent))\
+        .filter(and_(Unit.property_id.in_(property_ids), Unit.is_occupied == True))\
+        .scalar() or 0
+
+    collected_rent = db.query(func.sum(Payment.amount))\
+        .filter(
+            and_(
+                Payment.payment_type == PaymentType.RENT,
+                Payment.status == PaymentStatus.COMPLETED,
+                Payment.payment_date >= current_month_start
+            )
+        ).scalar() or 0
+
+    pending_rent = float(expected_rent) - float(collected_rent)
+
+    # Collection trend (last 6 months)
+    collection_trend = []
+    for i in range(6):
+        month_date = today - timedelta(days=30 * i)
+        month_start = datetime(month_date.year, month_date.month, 1).date()
+        month_end = datetime(month_date.year, month_date.month + 1 if month_date.month < 12 else 1, 1).date() - timedelta(days=1)
+
+        month_collected = db.query(func.sum(Payment.amount))\
+            .filter(
+                and_(
+                    Payment.payment_type == PaymentType.RENT,
+                    Payment.status == PaymentStatus.COMPLETED,
+                    Payment.payment_date >= month_start,
+                    Payment.payment_date <= month_end
+                )
+            ).scalar() or 0
+
+        collection_trend.append({
+            "month": month_date.strftime('%b %Y'),
+            "collected": float(month_collected)
+        })
+
+    collection_trend.reverse()  # Oldest first
+
+    # Utility bills summary
+    water_collected = db.query(func.sum(Payment.amount))\
+        .filter(
+            and_(
+                Payment.payment_type == PaymentType.WATER,
+                Payment.status == PaymentStatus.COMPLETED,
+                Payment.payment_date >= current_month_start
+            )
+        ).scalar() or 0
+
+    water_pending = db.query(func.sum(Payment.amount))\
+        .filter(
+            and_(
+                Payment.payment_type == PaymentType.WATER,
+                Payment.status == PaymentStatus.PENDING
+            )
+        ).scalar() or 0
+
+    electricity_collected = db.query(func.sum(Payment.amount))\
+        .filter(
+            and_(
+                Payment.payment_type == PaymentType.ELECTRICITY,
+                Payment.status == PaymentStatus.COMPLETED,
+                Payment.payment_date >= current_month_start
+            )
+        ).scalar() or 0
+
+    electricity_pending = db.query(func.sum(Payment.amount))\
+        .filter(
+            and_(
+                Payment.payment_type == PaymentType.ELECTRICITY,
+                Payment.status == PaymentStatus.PENDING
+            )
+        ).scalar() or 0
+
+    return {
+        "success": True,
+        "rent": {
+            "expected": float(expected_rent),
+            "collected": float(collected_rent),
+            "pending": pending_rent,
+            "collection_rate": round((float(collected_rent) / float(expected_rent) * 100) if expected_rent > 0 else 0, 2)
+        },
+        "collection_trend": collection_trend,
+        "utility_bills": {
+            "water": {
+                "collected": float(water_collected),
+                "pending": float(water_pending)
+            },
+            "electricity": {
+                "collected": float(electricity_collected),
+                "pending": float(electricity_pending)
+            }
+        }
+    }

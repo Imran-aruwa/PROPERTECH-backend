@@ -27,7 +27,8 @@ from app.api.routes import (
     tenant_portal_router,
     settings_router,
     staff_security_router,
-    staff_gardener_router
+    staff_gardener_router,
+    admin_router
 )
 from app.core.config import settings
 from app.database import test_connection, init_db, close_db_connection
@@ -135,6 +136,7 @@ app.include_router(tenant_portal_router, prefix="/api/tenant", tags=["Tenant Por
 app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])
 app.include_router(staff_security_router, prefix="/api/staff/security", tags=["Security Staff"])
 app.include_router(staff_gardener_router, prefix="/api/staff/gardener", tags=["Gardener Staff"])
+app.include_router(admin_router, prefix="/api/admin", tags=["Admin"])
 
 
 # ==================== ERROR HANDLERS ====================
