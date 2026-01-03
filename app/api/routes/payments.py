@@ -5,12 +5,13 @@ Simplified payment handling
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from typing import Optional
+from pydantic import BaseModel
 import uuid
 import httpx
 from datetime import datetime, timedelta
 
 from app.database import get_db
-from app.models.payment import Payment, Subscription, PaymentStatus, SubscriptionStatus
+from app.models.payment import Payment, Subscription, PaymentStatus, SubscriptionStatus, SubscriptionPlan, PaymentGateway, PaymentCurrency
 from app.schemas.payment import (
     InitiatePaymentRequest,
     InitiatePaymentResponse,
@@ -546,16 +547,16 @@ async def activate_free_subscription(
             "subscription_id": str(existing.id)
         }
 
-    # Create a free trial subscription
+    # Create a free trial subscription (using STARTER plan with 0 amount)
     subscription = Subscription(
         id=uuid.uuid4(),
         user_id=current_user.id,
-        plan="free_trial",
+        plan=SubscriptionPlan.STARTER,  # Free trial = Starter with 0 cost
         status=SubscriptionStatus.ACTIVE,
-        currency="KES",
-        billing_cycle="monthly",
+        currency=PaymentCurrency.KES,
+        billing_cycle="free_trial",  # Mark as free trial via billing_cycle
         amount=0,
-        gateway="free",
+        gateway=PaymentGateway.PAYSTACK,  # Default gateway
         start_date=datetime.utcnow(),
         next_billing_date=datetime.utcnow() + timedelta(days=14)  # 14-day free trial
     )
@@ -569,43 +570,136 @@ async def activate_free_subscription(
         "message": "Free trial activated successfully",
         "subscription": {
             "id": str(subscription.id),
-            "plan": subscription.plan,
+            "plan": "free_trial",  # Display as free_trial to frontend
             "status": subscription.status.value,
+            "billing_cycle": subscription.billing_cycle,
             "trial_ends": subscription.next_billing_date.isoformat()
         }
     }
 
 
+class VerifyPaymentV1Request(BaseModel):
+    """Request body for v1 payment verification"""
+    reference: str
+    plan_id: Optional[str] = None
+    billing_cycle: Optional[str] = "monthly"  # monthly or yearly
+
+
 @v1_router.post("/payments/verify")
 async def verify_payment_v1(
-    reference: str,
+    payload: VerifyPaymentV1Request,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
-    Verify payment - v1 API compatibility endpoint
+    Verify payment with Paystack and activate subscription
+    Body: { reference, plan_id, billing_cycle }
     """
-    # This is an alias for the main verify endpoint
     try:
+        # Verify with Paystack API
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{PAYSTACK_BASE_URL}/transaction/verify/{reference}",
+                f"{PAYSTACK_BASE_URL}/transaction/verify/{payload.reference}",
                 headers={"Authorization": f"Bearer {PAYSTACK_SECRET_KEY}"}
             )
 
-            if response.status_code == 200:
-                data = response.json()
-                if data.get("data", {}).get("status") == "success":
-                    return {
-                        "success": True,
-                        "message": "Payment verified successfully",
-                        "data": data.get("data")
-                    }
+            if response.status_code != 200:
+                raise HTTPException(status_code=400, detail="Payment verification failed")
 
-        return {
-            "success": False,
-            "message": "Payment verification failed"
-        }
+            data = response.json()
 
+            if not data.get("status") or data.get("data", {}).get("status") != "success":
+                return {
+                    "success": False,
+                    "message": "Payment verification failed",
+                    "status": data.get("data", {}).get("status", "unknown")
+                }
+
+            # Payment verified - update payment record if exists
+            payment = db.query(Payment).filter(Payment.reference == payload.reference).first()
+            if payment:
+                payment.status = PaymentStatus.COMPLETED
+                payment.paid_at = datetime.utcnow()
+                db.commit()
+
+            # Activate subscription for the user
+            plan_id = payload.plan_id or data.get("data", {}).get("metadata", {}).get("plan_id")
+            billing_cycle = payload.billing_cycle or "monthly"
+
+            # Cancel any existing active subscription
+            existing_sub = db.query(Subscription)\
+                .filter(Subscription.user_id == current_user.id)\
+                .filter(Subscription.status == SubscriptionStatus.ACTIVE)\
+                .first()
+
+            if existing_sub:
+                existing_sub.status = SubscriptionStatus.CANCELLED
+                existing_sub.cancelled_at = datetime.utcnow()
+
+            # Map plan_id string to enum
+            plan_map = {
+                "starter": SubscriptionPlan.STARTER,
+                "professional": SubscriptionPlan.PROFESSIONAL,
+                "enterprise": SubscriptionPlan.ENTERPRISE
+            }
+
+            # Map currency string to enum
+            currency_map = {
+                "KES": PaymentCurrency.KES,
+                "USD": PaymentCurrency.USD,
+                "UGX": PaymentCurrency.UGX,
+                "NGN": PaymentCurrency.NGN
+            }
+
+            # Get amount from Paystack response (in kobo/cents)
+            paystack_amount = data.get("data", {}).get("amount", 0) / 100
+            currency_str = data.get("data", {}).get("currency", "KES")
+
+            # Determine plan enum (default to STARTER)
+            plan_enum = plan_map.get(plan_id, SubscriptionPlan.STARTER)
+            currency_enum = currency_map.get(currency_str, PaymentCurrency.KES)
+
+            # Create new active subscription
+            subscription = Subscription(
+                id=uuid.uuid4(),
+                user_id=current_user.id,
+                plan=plan_enum,
+                status=SubscriptionStatus.ACTIVE,
+                currency=currency_enum,
+                billing_cycle=billing_cycle,
+                amount=paystack_amount,
+                gateway=PaymentGateway.PAYSTACK,
+                gateway_subscription_id=data.get("data", {}).get("reference"),
+                start_date=datetime.utcnow(),
+                next_billing_date=datetime.utcnow() + timedelta(days=30 if billing_cycle == "monthly" else 365)
+            )
+
+            db.add(subscription)
+            db.commit()
+            db.refresh(subscription)
+
+            return {
+                "success": True,
+                "message": "Payment verified and subscription activated",
+                "subscription": {
+                    "id": str(subscription.id),
+                    "plan": subscription.plan,
+                    "status": subscription.status.value,
+                    "billing_cycle": subscription.billing_cycle,
+                    "amount": subscription.amount,
+                    "currency": subscription.currency,
+                    "start_date": subscription.start_date.isoformat(),
+                    "next_billing_date": subscription.next_billing_date.isoformat()
+                },
+                "payment_data": {
+                    "reference": payload.reference,
+                    "amount": paystack_amount,
+                    "currency": data.get("data", {}).get("currency", "KES"),
+                    "paid_at": data.get("data", {}).get("paid_at")
+                }
+            }
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
