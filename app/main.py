@@ -254,7 +254,7 @@ async def startup_event():
     logger.info("="*70)
     logger.info(f"Environment: {'Production' if not settings.DEBUG else 'Development'}")
     logger.info(f"Frontend URL: {settings.FRONTEND_URL}")
-    
+
     # Test database connection NON-BLOCKING
     logger.info("Testing database connection...")
     try:
@@ -264,6 +264,19 @@ async def startup_event():
             logger.warning("[WARN] Database connection failed - continuing in degraded mode")
     except Exception as db_error:
         logger.warning(f"[WARN] Database test failed: {db_error} - continuing in degraded mode")
+
+    # Run database migrations on startup (production)
+    logger.info("Running database migrations...")
+    try:
+        from alembic.config import Config
+        from alembic import command
+        import os
+
+        alembic_cfg = Config("alembic.ini")
+        command.upgrade(alembic_cfg, "head")
+        logger.info("[OK] Database migrations complete!")
+    except Exception as migration_error:
+        logger.warning(f"[WARN] Migration failed: {migration_error} - continuing anyway")
 
     # Initialize database NON-BLOCKING
     logger.info("Initializing database tables...")
