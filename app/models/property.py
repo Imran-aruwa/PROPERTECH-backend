@@ -12,13 +12,18 @@ class Property(Base):
 
     name = Column(String, nullable=False)
     address = Column(String, nullable=False)
+    city = Column(String, nullable=True)
+    state = Column(String, nullable=True)
+    postal_code = Column(String, nullable=True)
+    country = Column(String, nullable=True, default="Kenya")
     property_type = Column(String)  # residential, commercial, mixed
     description = Column(Text)
 
     purchase_price = Column(Float)
     purchase_date = Column(DateTime)
 
-    photos = Column(Text)  # Store as JSON string for portability
+    image_url = Column(String, nullable=True)  # Single image URL
+    photos = Column(Text)  # Store as JSON string for multiple photos
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
