@@ -16,6 +16,8 @@ class UnitBase(BaseModel):
     # Servant Quarters
     has_servant_quarters: Optional[bool] = False
     sq_bathrooms: Optional[int] = 0  # Bathrooms in servant quarters
+    # Description/notes
+    description: Optional[str] = None
 
 class UnitCreate(UnitBase):
     pass
@@ -31,6 +33,7 @@ class UnitUpdate(BaseModel):
     has_master_bedroom: Optional[bool] = None
     has_servant_quarters: Optional[bool] = None
     sq_bathrooms: Optional[int] = None
+    description: Optional[str] = None
 
 class UnitResponse(UnitBase):
     id: UUID
@@ -67,6 +70,8 @@ class PropertyCreate(PropertyBase):
     # Servant Quarters defaults
     default_has_servant_quarters: Optional[bool] = False
     default_sq_bathrooms: Optional[int] = 0  # Bathrooms in SQ
+    # Unit description template
+    default_unit_description: Optional[str] = None  # Description for all generated units
 
 class PropertyUpdate(BaseModel):
     name: Optional[str] = None

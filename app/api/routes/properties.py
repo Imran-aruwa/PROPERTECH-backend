@@ -61,6 +61,8 @@ def create_property(
     # Servant quarters
     default_has_servant_quarters = property_data.pop('default_has_servant_quarters', False)
     default_sq_bathrooms = property_data.pop('default_sq_bathrooms', 0)
+    # Unit description
+    default_unit_description = property_data.pop('default_unit_description', None)
 
     # Store total_units in property
     property_data['total_units'] = total_units
@@ -85,6 +87,7 @@ def create_property(
                 has_master_bedroom=default_has_master_bedroom,
                 has_servant_quarters=default_has_servant_quarters,
                 sq_bathrooms=default_sq_bathrooms,
+                description=default_unit_description,
                 status="vacant"
             )
             units_to_create.append(unit)

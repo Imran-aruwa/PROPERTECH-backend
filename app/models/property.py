@@ -54,6 +54,9 @@ class Unit(Base):
     has_servant_quarters = Column(Boolean, default=False)
     sq_bathrooms = Column(Integer, default=0)  # Bathrooms in servant quarters
 
+    # Description/notes for unit-specific details
+    description = Column(Text, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
