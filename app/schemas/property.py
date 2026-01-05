@@ -7,9 +7,15 @@ class UnitBase(BaseModel):
     unit_number: str
     bedrooms: Optional[int] = None
     bathrooms: Optional[float] = None
+    toilets: Optional[int] = 0  # Separate toilet count
     square_feet: Optional[int] = None
     monthly_rent: Optional[float] = None
     status: str = "vacant"
+    # Master bedroom
+    has_master_bedroom: Optional[bool] = False
+    # Servant Quarters
+    has_servant_quarters: Optional[bool] = False
+    sq_bathrooms: Optional[int] = 0  # Bathrooms in servant quarters
 
 class UnitCreate(UnitBase):
     pass
@@ -18,15 +24,19 @@ class UnitUpdate(BaseModel):
     unit_number: Optional[str] = None
     bedrooms: Optional[int] = None
     bathrooms: Optional[float] = None
+    toilets: Optional[int] = None
     square_feet: Optional[int] = None
     monthly_rent: Optional[float] = None
     status: Optional[str] = None
+    has_master_bedroom: Optional[bool] = None
+    has_servant_quarters: Optional[bool] = None
+    sq_bathrooms: Optional[int] = None
 
 class UnitResponse(UnitBase):
     id: UUID
     property_id: UUID
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -49,8 +59,14 @@ class PropertyCreate(PropertyBase):
     unit_prefix: Optional[str] = "Unit"  # Prefix for unit numbers (e.g., "Unit", "Apt", "Suite")
     default_bedrooms: Optional[int] = 1
     default_bathrooms: Optional[float] = 1.0
+    default_toilets: Optional[int] = 0  # Separate toilets
     default_rent: Optional[float] = None
     default_square_feet: Optional[int] = None
+    # Master bedroom
+    default_has_master_bedroom: Optional[bool] = False
+    # Servant Quarters defaults
+    default_has_servant_quarters: Optional[bool] = False
+    default_sq_bathrooms: Optional[int] = 0  # Bathrooms in SQ
 
 class PropertyUpdate(BaseModel):
     name: Optional[str] = None

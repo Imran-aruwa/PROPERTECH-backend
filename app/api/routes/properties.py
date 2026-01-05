@@ -46,17 +46,21 @@ def create_property(
     current_user: User = Depends(get_current_user)
 ):
     """Create a new property with optional automatic unit generation"""
-    # Extract unit generation fields (not part of Property model)
-    unit_generation_fields = ['total_units', 'unit_prefix', 'default_bedrooms',
-                              'default_bathrooms', 'default_rent', 'default_square_feet']
     property_data = property_in.dict()
 
+    # Extract unit generation fields (not part of Property model)
     total_units = property_data.pop('total_units', None) or 0
     unit_prefix = property_data.pop('unit_prefix', 'Unit')
     default_bedrooms = property_data.pop('default_bedrooms', 1)
     default_bathrooms = property_data.pop('default_bathrooms', 1.0)
+    default_toilets = property_data.pop('default_toilets', 0)
     default_rent = property_data.pop('default_rent', None)
     default_square_feet = property_data.pop('default_square_feet', None)
+    # Master bedroom
+    default_has_master_bedroom = property_data.pop('default_has_master_bedroom', False)
+    # Servant quarters
+    default_has_servant_quarters = property_data.pop('default_has_servant_quarters', False)
+    default_sq_bathrooms = property_data.pop('default_sq_bathrooms', 0)
 
     # Store total_units in property
     property_data['total_units'] = total_units
@@ -75,8 +79,12 @@ def create_property(
                 unit_number=f"{unit_prefix} {i}",
                 bedrooms=default_bedrooms,
                 bathrooms=default_bathrooms,
+                toilets=default_toilets,
                 monthly_rent=default_rent,
                 square_feet=default_square_feet,
+                has_master_bedroom=default_has_master_bedroom,
+                has_servant_quarters=default_has_servant_quarters,
+                sq_bathrooms=default_sq_bathrooms,
                 status="vacant"
             )
             units_to_create.append(unit)

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, ForeignKey, DateTime, Integer, Float, Text, Uuid
+from sqlalchemy import Column, String, ForeignKey, DateTime, Integer, Float, Text, Uuid, Boolean
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
@@ -38,16 +38,24 @@ class Unit(Base):
 
     id = Column(Uuid, primary_key=True, default=uuid.uuid4)
     property_id = Column(Uuid, ForeignKey("properties.id"), nullable=False)
-    
+
     unit_number = Column(String, nullable=False)
     bedrooms = Column(Integer)
     bathrooms = Column(Float)
+    toilets = Column(Integer, default=0)  # Separate toilet count
     square_feet = Column(Integer)
     monthly_rent = Column(Float)
     status = Column(String, default="vacant")  # vacant, occupied, maintenance
-    
+
+    # Master bedroom
+    has_master_bedroom = Column(Boolean, default=False)
+
+    # Servant Quarters (SQ)
+    has_servant_quarters = Column(Boolean, default=False)
+    sq_bathrooms = Column(Integer, default=0)  # Bathrooms in servant quarters
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
     # Relationships
     property = relationship("Property", back_populates="units")
