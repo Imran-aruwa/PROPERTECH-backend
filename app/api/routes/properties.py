@@ -20,9 +20,45 @@ def create_property(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Create a new property"""
-    property = Property(**property_in.dict(), user_id=current_user.id)
+    """Create a new property with optional automatic unit generation"""
+    # Extract unit generation fields (not part of Property model)
+    unit_generation_fields = ['total_units', 'unit_prefix', 'default_bedrooms',
+                              'default_bathrooms', 'default_rent', 'default_square_feet']
+    property_data = property_in.dict()
+
+    total_units = property_data.pop('total_units', None) or 0
+    unit_prefix = property_data.pop('unit_prefix', 'Unit')
+    default_bedrooms = property_data.pop('default_bedrooms', 1)
+    default_bathrooms = property_data.pop('default_bathrooms', 1.0)
+    default_rent = property_data.pop('default_rent', None)
+    default_square_feet = property_data.pop('default_square_feet', None)
+
+    # Store total_units in property
+    property_data['total_units'] = total_units
+
+    # Create the property
+    property = Property(**property_data, user_id=current_user.id)
     db.add(property)
+    db.flush()  # Get the property ID without committing
+
+    # Auto-generate units if total_units > 0
+    if total_units > 0:
+        units_to_create = []
+        for i in range(1, total_units + 1):
+            unit = Unit(
+                property_id=property.id,
+                unit_number=f"{unit_prefix} {i}",
+                bedrooms=default_bedrooms,
+                bathrooms=default_bathrooms,
+                monthly_rent=default_rent,
+                square_feet=default_square_feet,
+                status="vacant"
+            )
+            units_to_create.append(unit)
+
+        # Bulk insert all units
+        db.bulk_save_objects(units_to_create)
+
     db.commit()
     db.refresh(property)
     return property

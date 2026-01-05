@@ -25,6 +25,8 @@ class Property(Base):
     image_url = Column(String, nullable=True)  # Single image URL
     photos = Column(Text)  # Store as JSON string for multiple photos
 
+    total_units = Column(Integer, default=0)  # Total number of units in the property
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
