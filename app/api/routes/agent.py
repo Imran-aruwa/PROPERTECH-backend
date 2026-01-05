@@ -18,8 +18,34 @@ from app.models.meter import MeterReading
 from app.models.lead import Lead, LeadStatus
 from app.models.viewing import Viewing, ViewingStatus
 from pydantic import BaseModel
+import uuid as uuid_module
 
 router = APIRouter(tags=["agent"])
+
+
+# Pydantic schema for property creation by agent
+class AgentPropertyCreate(BaseModel):
+    name: str
+    address: str
+    city: Optional[str] = None
+    state: Optional[str] = None
+    postal_code: Optional[str] = None
+    country: Optional[str] = "Kenya"
+    property_type: Optional[str] = "residential"
+    description: Optional[str] = None
+    image_url: Optional[str] = None
+    # Unit generation fields
+    total_units: Optional[int] = 0
+    unit_prefix: Optional[str] = "Unit"
+    default_bedrooms: Optional[int] = 1
+    default_bathrooms: Optional[float] = 1.0
+    default_toilets: Optional[int] = 0
+    default_rent: Optional[float] = None
+    default_square_feet: Optional[int] = None
+    default_has_master_bedroom: Optional[bool] = False
+    default_has_servant_quarters: Optional[bool] = False
+    default_sq_bathrooms: Optional[int] = 0
+    default_unit_description: Optional[str] = None
 
 
 # Pydantic schema for lead creation
@@ -53,7 +79,7 @@ def get_agent_dashboard(
     # Calculate metrics
     total_units = db.query(Unit).filter(Unit.property_id.in_(property_ids)).count()
     occupied_units = db.query(Unit).filter(
-        and_(Unit.property_id.in_(property_ids), Unit.is_occupied == True)
+        and_(Unit.property_id.in_(property_ids), Unit.status == "occupied")
     ).count()
 
     today = datetime.utcnow().date()
@@ -223,7 +249,7 @@ def get_agent_properties(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get properties managed by agent"""
+    """Get all properties in the system for agent to manage"""
     if current_user.role != UserRole.AGENT:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
@@ -233,15 +259,20 @@ def get_agent_properties(
     for prop in properties:
         units = db.query(Unit).filter(Unit.property_id == prop.id).count()
         occupied = db.query(Unit).filter(
-            and_(Unit.property_id == prop.id, Unit.is_occupied == True)
+            and_(Unit.property_id == prop.id, Unit.status == "occupied")
         ).count()
+        vacant = units - occupied
 
         property_list.append({
             "id": str(prop.id),
             "name": prop.name,
             "address": prop.address,
+            "city": prop.city,
+            "description": prop.description,
+            "image_url": prop.image_url,
             "total_units": units,
             "occupied_units": occupied,
+            "vacant_units": vacant,
             "occupancy_rate": round((occupied / units * 100) if units > 0 else 0, 2)
         })
 
@@ -249,6 +280,146 @@ def get_agent_properties(
         "success": True,
         "total_properties": len(properties),
         "properties": property_list
+    }
+
+
+@router.post("/properties")
+def create_agent_property(
+    property_data: AgentPropertyCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Create a new property as an agent"""
+    if current_user.role != UserRole.AGENT:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    # Create the property
+    new_property = Property(
+        id=uuid_module.uuid4(),
+        user_id=current_user.id,
+        name=property_data.name,
+        address=property_data.address,
+        city=property_data.city,
+        state=property_data.state,
+        postal_code=property_data.postal_code,
+        country=property_data.country,
+        property_type=property_data.property_type,
+        description=property_data.description,
+        image_url=property_data.image_url,
+        total_units=property_data.total_units or 0
+    )
+
+    db.add(new_property)
+    db.flush()  # Get the property ID
+
+    # Auto-generate units if total_units > 0
+    units_created = 0
+    if property_data.total_units and property_data.total_units > 0:
+        for i in range(1, property_data.total_units + 1):
+            unit = Unit(
+                id=uuid_module.uuid4(),
+                property_id=new_property.id,
+                unit_number=f"{property_data.unit_prefix} {i}",
+                bedrooms=property_data.default_bedrooms,
+                bathrooms=property_data.default_bathrooms,
+                toilets=property_data.default_toilets,
+                monthly_rent=property_data.default_rent,
+                square_feet=property_data.default_square_feet,
+                has_master_bedroom=property_data.default_has_master_bedroom,
+                has_servant_quarters=property_data.default_has_servant_quarters,
+                sq_bathrooms=property_data.default_sq_bathrooms,
+                description=property_data.default_unit_description,
+                status="vacant"
+            )
+            db.add(unit)
+            units_created += 1
+
+    db.commit()
+    db.refresh(new_property)
+
+    return {
+        "success": True,
+        "message": "Property created successfully",
+        "property": {
+            "id": str(new_property.id),
+            "name": new_property.name,
+            "address": new_property.address,
+            "city": new_property.city,
+            "total_units": units_created,
+            "created_at": new_property.created_at.isoformat() if new_property.created_at else None
+        }
+    }
+
+
+@router.get("/marketplace")
+def get_marketplace_properties(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all available properties with vacant units for sales/rentals"""
+    if current_user.role != UserRole.AGENT:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    # Get all properties with at least one vacant unit
+    properties = db.query(Property).all()
+
+    marketplace_list = []
+    for prop in properties:
+        # Get vacant units for this property
+        vacant_units = db.query(Unit).filter(
+            and_(Unit.property_id == prop.id, Unit.status == "vacant")
+        ).all()
+
+        if len(vacant_units) > 0:
+            # Calculate rent range
+            rents = [u.monthly_rent for u in vacant_units if u.monthly_rent]
+            min_rent = min(rents) if rents else 0
+            max_rent = max(rents) if rents else 0
+
+            # Get unit types summary
+            bedroom_counts = {}
+            for u in vacant_units:
+                beds = u.bedrooms or 0
+                bedroom_counts[beds] = bedroom_counts.get(beds, 0) + 1
+
+            unit_types = [f"{beds}BR ({count})" for beds, count in sorted(bedroom_counts.items())]
+
+            marketplace_list.append({
+                "id": str(prop.id),
+                "name": prop.name,
+                "address": prop.address,
+                "city": prop.city,
+                "description": prop.description,
+                "image_url": prop.image_url,
+                "vacant_units": len(vacant_units),
+                "min_rent": float(min_rent) if min_rent else None,
+                "max_rent": float(max_rent) if max_rent else None,
+                "unit_types": unit_types,
+                "units": [
+                    {
+                        "id": str(u.id),
+                        "unit_number": u.unit_number,
+                        "bedrooms": u.bedrooms,
+                        "bathrooms": u.bathrooms,
+                        "toilets": u.toilets,
+                        "square_feet": u.square_feet,
+                        "monthly_rent": float(u.monthly_rent) if u.monthly_rent else None,
+                        "has_master_bedroom": u.has_master_bedroom,
+                        "has_servant_quarters": u.has_servant_quarters,
+                        "description": u.description
+                    }
+                    for u in vacant_units
+                ]
+            })
+
+    # Sort by number of vacant units (most first)
+    marketplace_list.sort(key=lambda x: x["vacant_units"], reverse=True)
+
+    return {
+        "success": True,
+        "total_properties": len(marketplace_list),
+        "total_vacant_units": sum(p["vacant_units"] for p in marketplace_list),
+        "properties": marketplace_list
     }
 
 
@@ -315,7 +486,7 @@ def get_agent_rent_tracking(
 
     # Total expected rent
     total_expected = db.query(func.sum(Unit.monthly_rent))\
-        .filter(and_(Unit.property_id.in_(property_ids), Unit.is_occupied == True))\
+        .filter(and_(Unit.property_id.in_(property_ids), Unit.status == "occupied"))\
         .scalar() or 0
 
     # Total collected
@@ -336,7 +507,7 @@ def get_agent_rent_tracking(
     property_breakdown = []
     for prop in properties:
         prop_expected = db.query(func.sum(Unit.monthly_rent))\
-            .filter(and_(Unit.property_id == prop.id, Unit.is_occupied == True))\
+            .filter(and_(Unit.property_id == prop.id, Unit.status == "occupied"))\
             .scalar() or 0
 
         prop_collected = db.query(func.sum(Payment.amount))\
