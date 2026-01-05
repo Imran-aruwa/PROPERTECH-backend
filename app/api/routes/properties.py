@@ -13,6 +13,31 @@ from app.schemas.property import (
 
 router = APIRouter()
 
+
+def property_with_stats(prop: Property) -> dict:
+    """Convert property to dict with computed stats"""
+    occupied = sum(1 for u in prop.units if u.status == "occupied") if prop.units else 0
+    return {
+        "id": prop.id,
+        "user_id": prop.user_id,
+        "name": prop.name,
+        "address": prop.address,
+        "city": prop.city,
+        "state": prop.state,
+        "postal_code": prop.postal_code,
+        "country": prop.country,
+        "property_type": prop.property_type,
+        "description": prop.description,
+        "purchase_price": prop.purchase_price,
+        "purchase_date": prop.purchase_date,
+        "image_url": prop.image_url,
+        "photos": [],
+        "total_units": prop.total_units or len(prop.units) if prop.units else 0,
+        "occupied_units": occupied,
+        "created_at": prop.created_at,
+        "units": prop.units or []
+    }
+
 # Property endpoints
 @router.post("/", response_model=PropertyResponse, status_code=status.HTTP_201_CREATED)
 def create_property(
@@ -61,7 +86,7 @@ def create_property(
 
     db.commit()
     db.refresh(property)
-    return property
+    return property_with_stats(property)
 
 @router.get("/", response_model=List[PropertyResponse])
 def list_properties(
@@ -76,7 +101,7 @@ def list_properties(
         .offset(skip)\
         .limit(limit)\
         .all()
-    return properties
+    return [property_with_stats(p) for p in properties]
 
 @router.get("/{property_id}", response_model=PropertyResponse)
 def get_property(
@@ -88,10 +113,10 @@ def get_property(
     property = db.query(Property)\
         .filter(Property.id == property_id, Property.user_id == current_user.id)\
         .first()
-    
+
     if not property:
         raise HTTPException(status_code=404, detail="Property not found")
-    return property
+    return property_with_stats(property)
 
 @router.put("/{property_id}", response_model=PropertyResponse)
 def update_property(
@@ -104,16 +129,16 @@ def update_property(
     property = db.query(Property)\
         .filter(Property.id == property_id, Property.user_id == current_user.id)\
         .first()
-    
+
     if not property:
         raise HTTPException(status_code=404, detail="Property not found")
-    
+
     for key, value in property_update.dict(exclude_unset=True).items():
         setattr(property, key, value)
-    
+
     db.commit()
     db.refresh(property)
-    return property
+    return property_with_stats(property)
 
 @router.delete("/{property_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_property(

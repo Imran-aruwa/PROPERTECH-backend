@@ -1,7 +1,7 @@
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel
 from uuid import UUID
 from datetime import datetime
-from typing import Optional, List, Any
+from typing import Optional, List
 
 class UnitBase(BaseModel):
     unit_number: str
@@ -71,27 +71,9 @@ class PropertyResponse(PropertyBase):
     image_url: Optional[str] = None
     photos: Optional[List[str]] = []
     total_units: Optional[int] = 0
-    occupied_units: Optional[int] = 0  # Computed from units with status="occupied"
+    occupied_units: Optional[int] = 0  # Set by endpoint based on units
     created_at: datetime
     units: List[UnitResponse] = []
 
     class Config:
         from_attributes = True
-
-    @model_validator(mode='before')
-    @classmethod
-    def compute_occupied_units(cls, data: Any) -> Any:
-        """Compute occupied_units from units list"""
-        if hasattr(data, '__dict__'):
-            # SQLAlchemy model
-            if hasattr(data, 'units') and data.units:
-                occupied = sum(1 for u in data.units if u.status == "occupied")
-                # Create a dict to modify
-                data_dict = {key: getattr(data, key) for key in dir(data) if not key.startswith('_')}
-                data_dict['occupied_units'] = occupied
-                return data_dict
-        elif isinstance(data, dict):
-            units = data.get('units', [])
-            if units:
-                data['occupied_units'] = sum(1 for u in units if (u.get('status') if isinstance(u, dict) else u.status) == "occupied")
-        return data

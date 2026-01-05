@@ -9,7 +9,7 @@ from typing import List, Optional
 from datetime import datetime, timedelta
 
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.core.deps import get_current_user
 from app.models.user import User, UserRole
 from app.models.property import Property, Unit
 from app.models.tenant import Tenant
@@ -30,7 +30,7 @@ def get_owner_dashboard(
     if current_user.role != UserRole.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    properties = db.query(Property).filter(Property.owner_id == current_user.id).all()
+    properties = db.query(Property).filter(Property.user_id == current_user.id).all()
 
     if not properties:
         return {
@@ -45,7 +45,7 @@ def get_owner_dashboard(
     # Unit metrics
     total_units = db.query(Unit).filter(Unit.property_id.in_(property_ids)).count()
     occupied_units = db.query(Unit).filter(
-        and_(Unit.property_id.in_(property_ids), Unit.is_occupied == True)
+        and_(Unit.property_id.in_(property_ids), Unit.status == "occupied")
     ).count()
     occupancy_rate = (occupied_units / total_units * 100) if total_units > 0 else 0
 
@@ -55,7 +55,7 @@ def get_owner_dashboard(
     current_month_end = datetime(today.year, today.month + 1 if today.month < 12 else 1, 1).date() - timedelta(days=1)
 
     expected_rent = db.query(func.sum(Unit.monthly_rent))\
-        .filter(and_(Unit.property_id.in_(property_ids), Unit.is_occupied == True))\
+        .filter(and_(Unit.property_id.in_(property_ids), Unit.status == "occupied"))\
         .scalar() or 0
 
     collected_rent = db.query(func.sum(Payment.amount))\
@@ -173,7 +173,7 @@ def get_owner_property_detail(
 
     # Calculate revenue metrics
     expected_rent = db.query(func.sum(Unit.monthly_rent))\
-        .filter(and_(Unit.property_id == property_id, Unit.is_occupied == True))\
+        .filter(and_(Unit.property_id == property_id, Unit.status == "occupied"))\
         .scalar() or 0
 
     collected_rent = db.query(func.sum(Payment.amount))\
@@ -350,7 +350,7 @@ def get_financial_analytics(
     if current_user.role != UserRole.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    properties = db.query(Property).filter(Property.owner_id == current_user.id).all()
+    properties = db.query(Property).filter(Property.user_id == current_user.id).all()
     property_ids = [p.id for p in properties]
 
     # Generate monthly data
@@ -367,7 +367,7 @@ def get_financial_analytics(
 
         # Calculate metrics for this month
         expected = db.query(func.sum(Unit.monthly_rent))\
-            .filter(and_(Unit.property_id.in_(property_ids), Unit.is_occupied == True))\
+            .filter(and_(Unit.property_id.in_(property_ids), Unit.status == "occupied"))\
             .scalar() or 0
 
         collected = db.query(func.sum(Payment.amount))\
@@ -404,13 +404,13 @@ def get_owner_properties(
     if current_user.role != UserRole.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    properties = db.query(Property).filter(Property.owner_id == current_user.id).all()
+    properties = db.query(Property).filter(Property.user_id == current_user.id).all()
 
     property_list = []
     for prop in properties:
         units = db.query(Unit).filter(Unit.property_id == prop.id).count()
         occupied = db.query(Unit).filter(
-            and_(Unit.property_id == prop.id, Unit.is_occupied == True)
+            and_(Unit.property_id == prop.id, Unit.status == "occupied")
         ).count()
 
         property_list.append({
@@ -543,7 +543,7 @@ def generate_monthly_report(
     month_start = datetime(year, month, 1).date()
     month_end = datetime(year, month + 1 if month < 12 else 1, 1).date() - timedelta(days=1)
 
-    properties = db.query(Property).filter(Property.owner_id == current_user.id).all()
+    properties = db.query(Property).filter(Property.user_id == current_user.id).all()
     property_ids = [p.id for p in properties]
 
     report = {
@@ -555,7 +555,7 @@ def generate_monthly_report(
 
     # Add financial summary
     expected_rent = db.query(func.sum(Unit.monthly_rent))\
-        .filter(and_(Unit.property_id.in_(property_ids), Unit.is_occupied == True))\
+        .filter(and_(Unit.property_id.in_(property_ids), Unit.status == "occupied"))\
         .scalar() or 0
 
     collected_rent = db.query(func.sum(Payment.amount))\
@@ -591,12 +591,12 @@ def get_owner_rent_summary(
     current_month_end = datetime(today.year, today.month + 1 if today.month < 12 else 1, 1).date() - timedelta(days=1)
 
     # Get owner's properties
-    properties = db.query(Property).filter(Property.owner_id == current_user.id).all()
+    properties = db.query(Property).filter(Property.user_id == current_user.id).all()
     property_ids = [p.id for p in properties]
 
     # Current month metrics
     expected_rent = db.query(func.sum(Unit.monthly_rent))\
-        .filter(and_(Unit.property_id.in_(property_ids), Unit.is_occupied == True))\
+        .filter(and_(Unit.property_id.in_(property_ids), Unit.status == "occupied"))\
         .scalar() or 0
 
     collected_rent = db.query(func.sum(Payment.amount))\
