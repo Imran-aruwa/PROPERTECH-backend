@@ -26,10 +26,14 @@ class Settings(BaseSettings):
     
     # ==================== CORS & Frontend ====================
     FRONTEND_URL: str = "https://propertechsoftware.com"
+    BACKEND_API_URL: str = "https://api.propertechsoftware.com"
     ALLOWED_ORIGINS: List[str] = [
         "http://localhost:3000",
         "http://localhost:3001",
+        "http://localhost:3002",
         "https://propertechsoftware.com",
+        "https://www.propertechsoftware.com",
+        "https://api.propertechsoftware.com",
     ]
     
     # ==================== Server Configuration ====================
