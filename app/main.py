@@ -347,3 +347,69 @@ async def get_version():
         "python_version": "3.11+",
         "fastapi_version": "0.115+"
     }
+
+
+# ==================== DEBUG ENDPOINT (NO AUTH) ====================
+
+@app.get("/api/debug/database", tags=["Debug"])
+async def debug_database():
+    """
+    Public debug endpoint to check database state.
+    NO AUTHENTICATION REQUIRED - use for troubleshooting.
+    """
+    from app.database import SessionLocal
+    from app.models.user import User, UserRole
+    from app.models.property import Property, Unit
+
+    db = SessionLocal()
+    try:
+        # Count records
+        user_count = db.query(User).count()
+        owner_count = db.query(User).filter(User.role == UserRole.OWNER).count()
+        property_count = db.query(Property).count()
+        unit_count = db.query(Unit).count()
+
+        # Get owners list (email only for privacy)
+        owners = db.query(User).filter(User.role == UserRole.OWNER).all()
+        owner_list = [{"id": str(o.id), "email": o.email} for o in owners]
+
+        # Get properties with their owner info
+        properties = db.query(Property).all()
+        property_list = []
+        for p in properties:
+            owner = db.query(User).filter(User.id == p.user_id).first()
+            property_list.append({
+                "id": str(p.id),
+                "name": p.name,
+                "user_id": str(p.user_id) if p.user_id else None,
+                "owner_email": owner.email if owner else "NOT FOUND",
+                "owner_exists": owner is not None
+            })
+
+        return {
+            "success": True,
+            "timestamp": datetime.utcnow().isoformat(),
+            "database_status": "connected",
+            "counts": {
+                "users": user_count,
+                "owners": owner_count,
+                "properties": property_count,
+                "units": unit_count
+            },
+            "owners": owner_list,
+            "properties": property_list,
+            "diagnosis": {
+                "has_owners": owner_count > 0,
+                "has_properties": property_count > 0,
+                "all_properties_have_owners": all(p["owner_exists"] for p in property_list) if property_list else True
+            }
+        }
+    except Exception as e:
+        logger.error(f"Debug endpoint error: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    finally:
+        db.close()
