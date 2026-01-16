@@ -691,3 +691,117 @@ def fix_property_owner_link(
         "new_owner_id": str(new_owner.id),
         "new_owner_email": new_owner.email
     }
+
+
+@router.post("/diagnostic/bulk-fix-properties")
+def bulk_fix_properties_ownership(
+    from_user_id: str,
+    to_owner_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Bulk reassign all properties from one user (e.g., agent) to an owner.
+    Use this to fix properties that were incorrectly linked to agents.
+    """
+    verify_admin(current_user)
+
+    # Verify target owner exists and has OWNER role
+    new_owner = db.query(User).filter(User.id == to_owner_id).first()
+    if not new_owner:
+        raise HTTPException(status_code=404, detail="Target owner not found")
+
+    if new_owner.role != UserRole.OWNER:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Target user has role '{new_owner.role.value}', expected 'owner'"
+        )
+
+    # Find all properties currently linked to from_user_id
+    properties = db.query(Property).filter(Property.user_id == from_user_id).all()
+
+    if not properties:
+        return {
+            "success": True,
+            "message": "No properties found for the specified user",
+            "updated_count": 0
+        }
+
+    # Update all properties
+    updated_props = []
+    for prop in properties:
+        prop.user_id = new_owner.id
+        updated_props.append({
+            "id": str(prop.id),
+            "name": prop.name
+        })
+
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"Reassigned {len(updated_props)} properties to {new_owner.email}",
+        "updated_count": len(updated_props),
+        "properties": updated_props,
+        "new_owner_id": str(new_owner.id),
+        "new_owner_email": new_owner.email
+    }
+
+
+@router.get("/diagnostic/list-owners")
+def list_all_owners(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    List all users with OWNER role for property assignment reference.
+    """
+    verify_admin(current_user)
+
+    owners = db.query(User).filter(User.role == UserRole.OWNER).all()
+
+    return {
+        "success": True,
+        "total": len(owners),
+        "owners": [
+            {
+                "id": str(o.id),
+                "email": o.email,
+                "full_name": o.full_name
+            }
+            for o in owners
+        ]
+    }
+
+
+@router.get("/diagnostic/orphaned-properties")
+def list_orphaned_properties(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    List properties owned by non-OWNER users (likely created by agents).
+    These may need to be reassigned to the correct owner.
+    """
+    verify_admin(current_user)
+
+    # Get all properties where owner is NOT an OWNER role user
+    all_properties = db.query(Property).all()
+    orphaned = []
+
+    for prop in all_properties:
+        owner = db.query(User).filter(User.id == prop.user_id).first()
+        if not owner or owner.role != UserRole.OWNER:
+            orphaned.append({
+                "property_id": str(prop.id),
+                "property_name": prop.name,
+                "current_user_id": str(prop.user_id) if prop.user_id else None,
+                "current_user_email": owner.email if owner else "Unknown",
+                "current_user_role": owner.role.value if owner else "Unknown"
+            })
+
+    return {
+        "success": True,
+        "total_orphaned": len(orphaned),
+        "orphaned_properties": orphaned
+    }

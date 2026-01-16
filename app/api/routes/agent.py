@@ -34,6 +34,7 @@ class AgentPropertyCreate(BaseModel):
     property_type: Optional[str] = "residential"
     description: Optional[str] = None
     image_url: Optional[str] = None
+    owner_id: Optional[str] = None  # Owner user ID - links property to owner's dashboard
     # Unit generation fields
     total_units: Optional[int] = 0
     unit_prefix: Optional[str] = "Unit"
@@ -293,10 +294,24 @@ def create_agent_property(
     if current_user.role != UserRole.AGENT:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
+    # Determine property owner: use provided owner_id or fall back to agent
+    property_owner_id = current_user.id
+    if property_data.owner_id:
+        # Validate owner exists and has OWNER role
+        owner = db.query(User).filter(User.id == property_data.owner_id).first()
+        if not owner:
+            raise HTTPException(status_code=404, detail="Owner not found")
+        if owner.role != UserRole.OWNER:
+            raise HTTPException(
+                status_code=400,
+                detail=f"User has role '{owner.role.value}', expected 'owner'"
+            )
+        property_owner_id = owner.id
+
     # Create the property
     new_property = Property(
         id=uuid_module.uuid4(),
-        user_id=current_user.id,
+        user_id=property_owner_id,
         name=property_data.name,
         address=property_data.address,
         city=property_data.city,
