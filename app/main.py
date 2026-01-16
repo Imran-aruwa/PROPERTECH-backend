@@ -288,6 +288,42 @@ async def startup_event():
     except Exception as init_error:
         logger.warning(f"[WARN] Database init failed: {init_error} - tables may not exist")
 
+    # ONE-TIME FIX: Reassign orphaned properties to owner
+    logger.info("Checking for orphaned properties...")
+    try:
+        from app.database import SessionLocal
+        from app.models.user import User, UserRole
+        from app.models.property import Property
+
+        db = SessionLocal()
+
+        # Find the first owner account
+        owner = db.query(User).filter(User.role == UserRole.OWNER).first()
+
+        if owner:
+            # Find all properties linked to non-OWNER users
+            all_properties = db.query(Property).all()
+            fixed_count = 0
+
+            for prop in all_properties:
+                prop_owner = db.query(User).filter(User.id == prop.user_id).first()
+                if not prop_owner or prop_owner.role != UserRole.OWNER:
+                    logger.info(f"  Fixing property '{prop.name}' -> owner {owner.email}")
+                    prop.user_id = owner.id
+                    fixed_count += 1
+
+            if fixed_count > 0:
+                db.commit()
+                logger.info(f"[OK] Fixed {fixed_count} orphaned properties -> {owner.email}")
+            else:
+                logger.info("[OK] No orphaned properties found")
+        else:
+            logger.info("[INFO] No owner account found - skipping property fix")
+
+        db.close()
+    except Exception as fix_error:
+        logger.warning(f"[WARN] Property fix failed: {fix_error} - continuing anyway")
+
     logger.info("="*70)
     logger.info("[OK] Application startup complete!")
     logger.info("="*70)
