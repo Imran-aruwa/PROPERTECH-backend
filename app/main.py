@@ -221,6 +221,49 @@ async def health_check():
         )
 
 
+@app.get("/debug/property-fix", tags=["System"])
+async def debug_property_fix():
+    """Debug endpoint to check property ownership status"""
+    try:
+        from app.database import SessionLocal
+        from app.models.user import User, UserRole
+        from app.models.property import Property
+
+        db = SessionLocal()
+
+        # Get all users with their roles
+        users = db.query(User).all()
+        user_list = [{"id": str(u.id), "email": u.email, "role": u.role.value} for u in users]
+
+        # Get all properties with their current owners
+        properties = db.query(Property).all()
+        property_list = []
+        for p in properties:
+            owner = db.query(User).filter(User.id == p.user_id).first()
+            property_list.append({
+                "id": str(p.id),
+                "name": p.name,
+                "user_id": str(p.user_id) if p.user_id else None,
+                "owner_email": owner.email if owner else "Unknown",
+                "owner_role": owner.role.value if owner else "Unknown"
+            })
+
+        # Find owners
+        owners = [u for u in user_list if u["role"] == "owner"]
+
+        db.close()
+
+        return {
+            "total_users": len(user_list),
+            "total_properties": len(property_list),
+            "owners": owners,
+            "users": user_list,
+            "properties": property_list
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.get("/status", tags=["System"])
 async def status_check():
     """Detailed status check"""
