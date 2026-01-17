@@ -14,6 +14,123 @@ from app.schemas.property import (
 router = APIRouter()
 
 
+# ==================== STATIC ROUTES FIRST (before /{property_id}) ====================
+
+@router.get("/units", response_model=List[UnitResponse])
+@router.get("/units/", response_model=List[UnitResponse])
+def list_all_units(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all units for current user's properties"""
+    from app.models.user import UserRole
+
+    # For owners, get all units
+    if current_user.role in [UserRole.OWNER, UserRole.ADMIN]:
+        units = db.query(Unit).all()
+        return units
+
+    # For other users, filter by their properties
+    properties = db.query(Property)\
+        .filter(Property.user_id == current_user.id)\
+        .all()
+
+    property_ids = [p.id for p in properties]
+    units = db.query(Unit).filter(Unit.property_id.in_(property_ids)).all()
+    return units
+
+
+@router.get("/units/{unit_id}", response_model=UnitResponse)
+def get_unit_by_id(
+    unit_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get a specific unit by ID"""
+    from app.models.user import UserRole
+
+    unit = db.query(Unit).filter(Unit.id == unit_id).first()
+
+    if not unit:
+        raise HTTPException(status_code=404, detail="Unit not found")
+
+    # Get property to check access
+    property = db.query(Property).filter(Property.id == unit.property_id).first()
+    has_access = (
+        property and property.user_id == current_user.id or
+        current_user.role in [UserRole.OWNER, UserRole.AGENT, UserRole.ADMIN, UserRole.CARETAKER]
+    )
+
+    if not has_access:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    return unit
+
+
+@router.put("/units/{unit_id}", response_model=UnitResponse)
+def update_unit_by_id(
+    unit_id: UUID,
+    unit_update: UnitUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Update a unit"""
+    from app.models.user import UserRole
+
+    unit = db.query(Unit).filter(Unit.id == unit_id).first()
+
+    if not unit:
+        raise HTTPException(status_code=404, detail="Unit not found")
+
+    # Get property to check access
+    property = db.query(Property).filter(Property.id == unit.property_id).first()
+    has_access = (
+        property and property.user_id == current_user.id or
+        current_user.role in [UserRole.OWNER, UserRole.AGENT, UserRole.ADMIN]
+    )
+
+    if not has_access:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    for key, value in unit_update.dict(exclude_unset=True).items():
+        setattr(unit, key, value)
+
+    db.commit()
+    db.refresh(unit)
+    return unit
+
+
+@router.delete("/units/{unit_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_unit_by_id(
+    unit_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Delete a unit"""
+    from app.models.user import UserRole
+
+    unit = db.query(Unit).filter(Unit.id == unit_id).first()
+
+    if not unit:
+        raise HTTPException(status_code=404, detail="Unit not found")
+
+    # Get property to check access
+    property = db.query(Property).filter(Property.id == unit.property_id).first()
+    has_access = (
+        property and property.user_id == current_user.id or
+        current_user.role in [UserRole.OWNER, UserRole.AGENT, UserRole.ADMIN]
+    )
+
+    if not has_access:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    db.delete(unit)
+    db.commit()
+    return None
+
+
+# ==================== HELPER FUNCTIONS ====================
+
 def property_with_stats(prop: Property) -> dict:
     """Convert property to dict with computed stats"""
     occupied = sum(1 for u in prop.units if u.status == "occupied") if prop.units else 0
@@ -244,117 +361,6 @@ def list_units(
 
     units = db.query(Unit).filter(Unit.property_id == property_id).all()
     return units
-
-@router.put("/units/{unit_id}", response_model=UnitResponse)
-def update_unit(
-    unit_id: UUID,
-    unit_update: UnitUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Update a unit"""
-    from app.models.user import UserRole
-
-    unit = db.query(Unit).filter(Unit.id == unit_id).first()
-
-    if not unit:
-        raise HTTPException(status_code=404, detail="Unit not found")
-
-    # Get property to check access
-    property = db.query(Property).filter(Property.id == unit.property_id).first()
-    has_access = (
-        property and property.user_id == current_user.id or
-        current_user.role in [UserRole.OWNER, UserRole.AGENT, UserRole.ADMIN]
-    )
-
-    if not has_access:
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    for key, value in unit_update.dict(exclude_unset=True).items():
-        setattr(unit, key, value)
-
-    db.commit()
-    db.refresh(unit)
-    return unit
-
-@router.delete("/units/{unit_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_unit(
-    unit_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Delete a unit"""
-    from app.models.user import UserRole
-
-    unit = db.query(Unit).filter(Unit.id == unit_id).first()
-
-    if not unit:
-        raise HTTPException(status_code=404, detail="Unit not found")
-
-    # Get property to check access
-    property = db.query(Property).filter(Property.id == unit.property_id).first()
-    has_access = (
-        property and property.user_id == current_user.id or
-        current_user.role in [UserRole.OWNER, UserRole.AGENT, UserRole.ADMIN]
-    )
-
-    if not has_access:
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    db.delete(unit)
-    db.commit()
-    return None
-
-
-@router.get("/units", response_model=List[UnitResponse])
-@router.get("/units/", response_model=List[UnitResponse])
-def list_all_units(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Get all units for current user's properties"""
-    from app.models.user import UserRole
-
-    # For owners, get all units
-    if current_user.role in [UserRole.OWNER, UserRole.ADMIN]:
-        units = db.query(Unit).all()
-        return units
-
-    # For other users, filter by their properties
-    properties = db.query(Property)\
-        .filter(Property.user_id == current_user.id)\
-        .all()
-
-    property_ids = [p.id for p in properties]
-    units = db.query(Unit).filter(Unit.property_id.in_(property_ids)).all()
-    return units
-
-
-@router.get("/units/{unit_id}", response_model=UnitResponse)
-def get_unit(
-    unit_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Get a specific unit by ID"""
-    from app.models.user import UserRole
-
-    unit = db.query(Unit).filter(Unit.id == unit_id).first()
-
-    if not unit:
-        raise HTTPException(status_code=404, detail="Unit not found")
-
-    # Get property to check access
-    property = db.query(Property).filter(Property.id == unit.property_id).first()
-    has_access = (
-        property and property.user_id == current_user.id or
-        current_user.role in [UserRole.OWNER, UserRole.AGENT, UserRole.ADMIN, UserRole.CARETAKER]
-    )
-
-    if not has_access:
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    return unit
 
 
 @router.put("/{property_id}/units/{unit_id}", response_model=UnitResponse)
