@@ -111,6 +111,232 @@ def create_staff(
     }
 
 
+# ==================== STAFF DASHBOARD (BEFORE /{staff_id}) ====================
+
+@router.get("/dashboard")
+def get_staff_dashboard(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get staff member's dashboard"""
+    staff_roles = [UserRole.STAFF, UserRole.HEAD_SECURITY, UserRole.HEAD_GARDENER, UserRole.SECURITY_GUARD, UserRole.GARDENER]
+
+    if current_user.role not in staff_roles:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    from app.models.attendance import Attendance
+
+    today = datetime.utcnow().date()
+
+    # Get today's attendance
+    attendance = db.query(Attendance).filter(
+        and_(
+            Attendance.staff_id == current_user.id,
+            Attendance.date == today
+        )
+    ).first()
+
+    # Get assigned tasks
+    tasks = db.query(Task)\
+        .filter(Task.assigned_to == current_user.id)\
+        .all()
+
+    pending_tasks = len([t for t in tasks if t.status == TaskStatus.PENDING])
+    completed_tasks = len([t for t in tasks if t.status == TaskStatus.COMPLETED])
+
+    return {
+        "success": True,
+        "user": current_user.full_name,
+        "role": current_user.role.value if hasattr(current_user.role, 'value') else str(current_user.role),
+        "timestamp": datetime.utcnow().isoformat(),
+        "today": {
+            "check_in": attendance.check_in_time.isoformat() if attendance and attendance.check_in_time else None,
+            "check_out": attendance.check_out_time.isoformat() if attendance and attendance.check_out_time else None,
+            "hours_worked": attendance.hours_worked if attendance else 0
+        },
+        "tasks": {
+            "total": len(tasks),
+            "pending": pending_tasks,
+            "completed": completed_tasks
+        }
+    }
+
+
+@router.get("/attendance")
+def get_attendance_record(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    skip: int = 0,
+    limit: int = 30
+):
+    """Get attendance records for current staff or managed staff"""
+    staff_roles = [UserRole.STAFF, UserRole.HEAD_SECURITY, UserRole.HEAD_GARDENER, UserRole.SECURITY_GUARD, UserRole.GARDENER, UserRole.CARETAKER]
+    if current_user.role not in staff_roles:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    from app.models.attendance import Attendance
+
+    # Get appropriate records based on role
+    if current_user.role in [UserRole.SECURITY_GUARD, UserRole.GARDENER]:
+        # Staff member sees only their own
+        records = db.query(Attendance)\
+            .filter(Attendance.staff_id == current_user.id)\
+            .order_by(desc(Attendance.date))\
+            .offset(skip)\
+            .limit(limit)\
+            .all()
+    else:
+        # Supervisors see their team
+        records = db.query(Attendance)\
+            .order_by(desc(Attendance.date))\
+            .offset(skip)\
+            .limit(limit)\
+            .all()
+
+    return {
+        "success": True,
+        "records_count": len(records),
+        "records": [
+            {
+                "id": r.id,
+                "staff_id": r.staff_id,
+                "date": r.date.isoformat(),
+                "check_in": r.check_in_time.isoformat() if r.check_in_time else None,
+                "check_out": r.check_out_time.isoformat() if r.check_out_time else None,
+                "hours_worked": r.hours_worked
+            }
+            for r in records
+        ]
+    }
+
+
+@router.get("/tasks")
+def get_tasks(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    skip: int = 0,
+    limit: int = 50
+):
+    """Get tasks assigned to current user or managed by current user"""
+    staff_roles = [UserRole.STAFF, UserRole.HEAD_SECURITY, UserRole.HEAD_GARDENER, UserRole.SECURITY_GUARD, UserRole.GARDENER, UserRole.CARETAKER]
+    if current_user.role not in staff_roles:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    if current_user.role in [UserRole.SECURITY_GUARD, UserRole.GARDENER]:
+        # Staff sees tasks assigned to them
+        tasks = db.query(Task)\
+            .filter(Task.assigned_to == current_user.id)\
+            .order_by(desc(Task.due_date))\
+            .offset(skip)\
+            .limit(limit)\
+            .all()
+    else:
+        # Supervisors see all tasks
+        tasks = db.query(Task)\
+            .order_by(desc(Task.due_date))\
+            .offset(skip)\
+            .limit(limit)\
+            .all()
+
+    return {
+        "success": True,
+        "tasks_count": len(tasks),
+        "tasks": [
+            {
+                "id": t.id,
+                "title": t.title,
+                "description": t.description,
+                "status": t.status.value if hasattr(t.status, 'value') else str(t.status),
+                "due_date": t.due_date.isoformat() if t.due_date else None,
+                "completed_at": t.completed_at.isoformat() if t.completed_at else None
+            }
+            for t in tasks
+        ]
+    }
+
+
+@router.get("/performance")
+def get_performance_metrics(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    days: int = 30
+):
+    """Get performance metrics for staff member or team"""
+    if current_user.role not in [UserRole.STAFF, UserRole.HEAD_SECURITY, UserRole.HEAD_GARDENER, UserRole.SECURITY_GUARD, UserRole.GARDENER, UserRole.CARETAKER]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    from app.models.attendance import Attendance
+
+    start_date = (datetime.utcnow().date()) - timedelta(days=days)
+
+    # Get attendance data
+    records = db.query(Attendance)\
+        .filter(Attendance.date >= start_date)\
+        .all()
+
+    # Get task completion
+    tasks = db.query(Task)\
+        .filter(Task.completed_at >= datetime.combine(start_date, datetime.min.time()))\
+        .all()
+
+    completed_tasks = len([t for t in tasks if t.status == TaskStatus.COMPLETED])
+
+    return {
+        "success": True,
+        "period_days": days,
+        "metrics": {
+            "attendance_rate": round((len([r for r in records if r.check_in_time]) / len(records) * 100) if records else 0, 2),
+            "tasks_completed": completed_tasks,
+            "average_hours_per_day": round(sum([r.hours_worked or 0 for r in records]) / len(records) if records else 0, 2)
+        }
+    }
+
+
+@router.get("/maintenance")
+def get_staff_maintenance(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get maintenance requests assigned to or visible by staff"""
+    if current_user.role not in [UserRole.STAFF, UserRole.HEAD_SECURITY, UserRole.HEAD_GARDENER, UserRole.SECURITY_GUARD, UserRole.GARDENER, UserRole.CARETAKER]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    from app.models.maintenance import MaintenanceRequest, MaintenanceStatus
+
+    # Get maintenance requests
+    requests = db.query(MaintenanceRequest).order_by(desc(MaintenanceRequest.created_at)).all()
+
+    # Calculate stats
+    total = len(requests)
+    pending = len([r for r in requests if r.status == MaintenanceStatus.PENDING])
+    in_progress = len([r for r in requests if r.status == MaintenanceStatus.IN_PROGRESS])
+    completed = len([r for r in requests if r.status == MaintenanceStatus.COMPLETED])
+
+    request_list = []
+    for req in requests:
+        request_list.append({
+            "id": str(req.id),
+            "title": req.title,
+            "description": req.description,
+            "status": req.status.value if req.status else "pending",
+            "priority": req.priority.value if req.priority else "medium",
+            "unit_id": str(req.unit_id) if req.unit_id else None,
+            "created_at": req.created_at.isoformat() if req.created_at else None,
+            "updated_at": req.updated_at.isoformat() if req.updated_at else None
+        })
+
+    return {
+        "success": True,
+        "total": total,
+        "pending": pending,
+        "in_progress": in_progress,
+        "completed": completed,
+        "requests": request_list
+    }
+
+
+# ==================== STAFF BY ID (MUST BE AFTER STATIC ROUTES) ====================
+
 @router.get("/{staff_id}")
 def get_staff_by_id(
     staff_id: str,
@@ -292,7 +518,8 @@ def get_attendance_record(
     limit: int = 30
 ):
     """Get attendance records for current staff or managed staff"""
-    if current_user.role not in [UserRole.HEAD_SECURITY, UserRole.HEAD_GARDENER, UserRole.SECURITY_GUARD, UserRole.GARDENER, UserRole.CARETAKER]:
+    staff_roles = [UserRole.STAFF, UserRole.HEAD_SECURITY, UserRole.HEAD_GARDENER, UserRole.SECURITY_GUARD, UserRole.GARDENER, UserRole.CARETAKER]
+    if current_user.role not in staff_roles:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     
     from app.models.attendance import Attendance
@@ -520,7 +747,8 @@ def get_tasks(
     limit: int = 50
 ):
     """Get tasks assigned to current user or managed by current user"""
-    if current_user.role not in [UserRole.HEAD_SECURITY, UserRole.HEAD_GARDENER, UserRole.SECURITY_GUARD, UserRole.GARDENER, UserRole.CARETAKER]:
+    staff_roles = [UserRole.STAFF, UserRole.HEAD_SECURITY, UserRole.HEAD_GARDENER, UserRole.SECURITY_GUARD, UserRole.GARDENER, UserRole.CARETAKER]
+    if current_user.role not in staff_roles:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     
     if current_user.role in [UserRole.SECURITY_GUARD, UserRole.GARDENER]:
@@ -634,137 +862,6 @@ def update_task(
         "task_id": task_id,
         "status": task.status.value if task.status else None,
         "updated_at": datetime.utcnow().isoformat()
-    }
-
-
-# ==================== PERFORMANCE ====================
-
-@router.get("/dashboard")
-def get_staff_dashboard(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Get staff member's dashboard"""
-    if current_user.role not in [UserRole.HEAD_SECURITY, UserRole.HEAD_GARDENER, UserRole.SECURITY_GUARD, UserRole.GARDENER]:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
-    from app.models.attendance import Attendance
-    
-    today = datetime.utcnow().date()
-    
-    # Get today's attendance
-    attendance = db.query(Attendance).filter(
-        and_(
-            Attendance.staff_id == current_user.id,
-            Attendance.date == today
-        )
-    ).first()
-    
-    # Get assigned tasks
-    tasks = db.query(Task)\
-        .filter(Task.assigned_to == current_user.id)\
-        .all()
-    
-    pending_tasks = len([t for t in tasks if t.status == TaskStatus.PENDING])
-    completed_tasks = len([t for t in tasks if t.status == TaskStatus.COMPLETED])
-    
-    return {
-        "success": True,
-        "user": current_user.full_name,
-        "role": current_user.role,
-        "timestamp": datetime.utcnow().isoformat(),
-        "today": {
-            "check_in": attendance.check_in_time.isoformat() if attendance and attendance.check_in_time else None,
-            "check_out": attendance.check_out_time.isoformat() if attendance and attendance.check_out_time else None,
-            "hours_worked": attendance.hours_worked if attendance else 0
-        },
-        "tasks": {
-            "total": len(tasks),
-            "pending": pending_tasks,
-            "completed": completed_tasks
-        }
-    }
-
-
-@router.get("/performance")
-def get_performance_metrics(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-    days: int = 30
-):
-    """Get performance metrics for staff member or team"""
-    if current_user.role not in [UserRole.HEAD_SECURITY, UserRole.HEAD_GARDENER, UserRole.SECURITY_GUARD, UserRole.GARDENER, UserRole.CARETAKER]:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
-    from app.models.attendance import Attendance
-    
-    start_date = (datetime.utcnow().date()) - timedelta(days=days)
-    
-    # Get attendance data
-    records = db.query(Attendance)\
-        .filter(Attendance.date >= start_date)\
-        .all()
-    
-    # Get task completion
-    tasks = db.query(Task)\
-        .filter(Task.completed_at >= datetime.combine(start_date, datetime.min.time()))\
-        .all()
-    
-    completed_tasks = len([t for t in tasks if t.status == TaskStatus.COMPLETED])
-    
-    return {
-        "success": True,
-        "period_days": days,
-        "metrics": {
-            "attendance_rate": round((len([r for r in records if r.check_in_time]) / len(records) * 100) if records else 0, 2),
-            "tasks_completed": completed_tasks,
-            "average_hours_per_day": round(sum([r.hours_worked or 0 for r in records]) / len(records) if records else 0, 2)
-        }
-    }
-
-
-# ==================== MAINTENANCE (FOR STAFF) ====================
-
-@router.get("/maintenance")
-def get_staff_maintenance(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Get maintenance requests assigned to or visible by staff"""
-    if current_user.role not in [UserRole.HEAD_SECURITY, UserRole.HEAD_GARDENER, UserRole.SECURITY_GUARD, UserRole.GARDENER, UserRole.CARETAKER]:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-
-    from app.models.maintenance import MaintenanceRequest, MaintenanceStatus
-
-    # Get maintenance requests
-    requests = db.query(MaintenanceRequest).order_by(desc(MaintenanceRequest.created_at)).all()
-
-    # Calculate stats
-    total = len(requests)
-    pending = len([r for r in requests if r.status == MaintenanceStatus.PENDING])
-    in_progress = len([r for r in requests if r.status == MaintenanceStatus.IN_PROGRESS])
-    completed = len([r for r in requests if r.status == MaintenanceStatus.COMPLETED])
-
-    request_list = []
-    for req in requests:
-        request_list.append({
-            "id": str(req.id),
-            "title": req.title,
-            "description": req.description,
-            "status": req.status.value if req.status else "pending",
-            "priority": req.priority.value if req.priority else "medium",
-            "unit_id": str(req.unit_id) if req.unit_id else None,
-            "created_at": req.created_at.isoformat() if req.created_at else None,
-            "updated_at": req.updated_at.isoformat() if req.updated_at else None
-        })
-
-    return {
-        "success": True,
-        "total": total,
-        "pending": pending,
-        "in_progress": in_progress,
-        "completed": completed,
-        "requests": request_list
     }
 
 

@@ -29,7 +29,10 @@ class UserCreate(UserBase):
 
     def get_role(self) -> str:
         role_value = (self.role or "owner").lower()
-        valid_roles = ["admin", "owner", "staff", "tenant", "agent", "caretaker"]
+        valid_roles = [
+            "admin", "owner", "staff", "tenant", "agent", "caretaker",
+            "head_security", "head_gardener", "security_guard", "gardener"
+        ]
         return role_value if role_value in valid_roles else "owner"
 
 

@@ -41,9 +41,17 @@ async def get_current_user(
         logger.warning(f"JWT decode error: {e}")
         raise credentials_exception
 
+    # Convert string UUID to UUID object for database query
+    import uuid as uuid_module
+    try:
+        user_uuid = uuid_module.UUID(user_id) if isinstance(user_id, str) else user_id
+    except ValueError:
+        logger.warning(f"Invalid UUID format: {user_id}")
+        raise credentials_exception
+
     # Query user by ID
     try:
-        user = db.query(User).filter(User.id == user_id).first()
+        user = db.query(User).filter(User.id == user_uuid).first()
     except Exception as e:
         logger.error(f"Database error looking up user {user_id}: {e}")
         raise HTTPException(

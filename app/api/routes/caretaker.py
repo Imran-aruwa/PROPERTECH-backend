@@ -47,17 +47,17 @@ def get_caretaker_dashboard(
     # Calculate metrics
     total_units = db.query(Unit).filter(Unit.property_id.in_(property_ids)).count()
     occupied_units = db.query(Unit).filter(
-        and_(Unit.property_id.in_(property_ids), Unit.is_occupied == True)
+        and_(Unit.property_id.in_(property_ids), Unit.status == "occupied")
     ).count()
     occupancy_rate = (occupied_units / total_units * 100) if total_units > 0 else 0
-    
+
     # Payment metrics
     today = datetime.utcnow().date()
     current_month_start = datetime(today.year, today.month, 1).date()
     current_month_end = datetime(today.year, today.month + 1 if today.month < 12 else 1, 1).date() - timedelta(days=1)
-    
+
     expected_rent = db.query(func.sum(Unit.monthly_rent))\
-        .filter(and_(Unit.property_id.in_(property_ids), Unit.is_occupied == True))\
+        .filter(and_(Unit.property_id.in_(property_ids), Unit.status == "occupied"))\
         .scalar() or 0
     
     collected_rent = db.query(func.sum(Payment.amount))\

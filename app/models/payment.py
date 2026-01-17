@@ -44,6 +44,9 @@ class PaymentMethod(str, Enum):
 class PaymentType(str, Enum):
     """Payment type enum"""
     RENT = "rent"
+    WATER = "water"
+    ELECTRICITY = "electricity"
+    GARBAGE = "garbage"
     DEPOSIT = "deposit"
     MAINTENANCE = "maintenance"
     PENALTY = "penalty"
@@ -89,7 +92,19 @@ class Payment(Base):
     
     # Status
     status: Mapped[PaymentStatus] = mapped_column(SQLEnum(PaymentStatus), default=PaymentStatus.PENDING, nullable=False)
-    
+
+    # Payment type (rent, deposit, maintenance, etc.)
+    payment_type: Mapped[PaymentType] = mapped_column(SQLEnum(PaymentType), nullable=True)
+
+    # Tenant reference (for rent/deposit payments)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=True)
+
+    # Payment date (when the payment was made)
+    payment_date: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+
+    # Due date (when payment is expected)
+    due_date: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+
     # Related to subscription or one-time
     subscription_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("subscriptions.id"), nullable=True)
     plan_id: Mapped[str] = mapped_column(String(50), nullable=True)
