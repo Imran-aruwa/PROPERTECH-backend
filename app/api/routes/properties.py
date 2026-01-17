@@ -190,14 +190,28 @@ def create_unit(
     current_user: User = Depends(get_current_user)
 ):
     """Add a unit to a property"""
-    # Verify property ownership
-    property = db.query(Property)\
-        .filter(Property.id == property_id, Property.user_id == current_user.id)\
-        .first()
-    
+    from app.models.user import UserRole
+
+    # Get property - allow access if user owns it OR if user is an owner role
+    property = db.query(Property).filter(Property.id == property_id).first()
+
     if not property:
         raise HTTPException(status_code=404, detail="Property not found")
-    
+
+    # Allow access if: user owns property, OR user is owner/agent role
+    has_access = (
+        property.user_id == current_user.id or
+        current_user.role in [UserRole.OWNER, UserRole.AGENT, UserRole.ADMIN]
+    )
+
+    if not has_access:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Link property to this owner if not already linked
+    if current_user.role == UserRole.OWNER and property.user_id != current_user.id:
+        property.user_id = current_user.id
+        db.commit()
+
     unit = Unit(**unit_in.dict(), property_id=property_id)
     db.add(unit)
     db.commit()
@@ -211,14 +225,23 @@ def list_units(
     current_user: User = Depends(get_current_user)
 ):
     """Get all units for a property"""
-    # Verify property ownership
-    property = db.query(Property)\
-        .filter(Property.id == property_id, Property.user_id == current_user.id)\
-        .first()
-    
+    from app.models.user import UserRole
+
+    # Get property - allow access if user owns it OR if user is an owner role
+    property = db.query(Property).filter(Property.id == property_id).first()
+
     if not property:
         raise HTTPException(status_code=404, detail="Property not found")
-    
+
+    # Allow access if: user owns property, OR user is owner/agent role
+    has_access = (
+        property.user_id == current_user.id or
+        current_user.role in [UserRole.OWNER, UserRole.AGENT, UserRole.ADMIN, UserRole.CARETAKER]
+    )
+
+    if not has_access:
+        raise HTTPException(status_code=403, detail="Access denied")
+
     units = db.query(Unit).filter(Unit.property_id == property_id).all()
     return units
 
@@ -230,17 +253,26 @@ def update_unit(
     current_user: User = Depends(get_current_user)
 ):
     """Update a unit"""
-    unit = db.query(Unit)\
-        .join(Property)\
-        .filter(Unit.id == unit_id, Property.user_id == current_user.id)\
-        .first()
-    
+    from app.models.user import UserRole
+
+    unit = db.query(Unit).filter(Unit.id == unit_id).first()
+
     if not unit:
         raise HTTPException(status_code=404, detail="Unit not found")
-    
+
+    # Get property to check access
+    property = db.query(Property).filter(Property.id == unit.property_id).first()
+    has_access = (
+        property and property.user_id == current_user.id or
+        current_user.role in [UserRole.OWNER, UserRole.AGENT, UserRole.ADMIN]
+    )
+
+    if not has_access:
+        raise HTTPException(status_code=403, detail="Access denied")
+
     for key, value in unit_update.dict(exclude_unset=True).items():
         setattr(unit, key, value)
-    
+
     db.commit()
     db.refresh(unit)
     return unit
@@ -252,13 +284,22 @@ def delete_unit(
     current_user: User = Depends(get_current_user)
 ):
     """Delete a unit"""
-    unit = db.query(Unit)\
-        .join(Property)\
-        .filter(Unit.id == unit_id, Property.user_id == current_user.id)\
-        .first()
+    from app.models.user import UserRole
+
+    unit = db.query(Unit).filter(Unit.id == unit_id).first()
 
     if not unit:
         raise HTTPException(status_code=404, detail="Unit not found")
+
+    # Get property to check access
+    property = db.query(Property).filter(Property.id == unit.property_id).first()
+    has_access = (
+        property and property.user_id == current_user.id or
+        current_user.role in [UserRole.OWNER, UserRole.AGENT, UserRole.ADMIN]
+    )
+
+    if not has_access:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     db.delete(unit)
     db.commit()
@@ -272,6 +313,14 @@ def list_all_units(
     current_user: User = Depends(get_current_user)
 ):
     """Get all units for current user's properties"""
+    from app.models.user import UserRole
+
+    # For owners, get all units
+    if current_user.role in [UserRole.OWNER, UserRole.ADMIN]:
+        units = db.query(Unit).all()
+        return units
+
+    # For other users, filter by their properties
     properties = db.query(Property)\
         .filter(Property.user_id == current_user.id)\
         .all()
@@ -288,13 +337,23 @@ def get_unit(
     current_user: User = Depends(get_current_user)
 ):
     """Get a specific unit by ID"""
-    unit = db.query(Unit)\
-        .join(Property)\
-        .filter(Unit.id == unit_id, Property.user_id == current_user.id)\
-        .first()
+    from app.models.user import UserRole
+
+    unit = db.query(Unit).filter(Unit.id == unit_id).first()
 
     if not unit:
         raise HTTPException(status_code=404, detail="Unit not found")
+
+    # Get property to check access
+    property = db.query(Property).filter(Property.id == unit.property_id).first()
+    has_access = (
+        property and property.user_id == current_user.id or
+        current_user.role in [UserRole.OWNER, UserRole.AGENT, UserRole.ADMIN, UserRole.CARETAKER]
+    )
+
+    if not has_access:
+        raise HTTPException(status_code=403, detail="Access denied")
+
     return unit
 
 
@@ -307,13 +366,21 @@ def update_unit_with_property(
     current_user: User = Depends(get_current_user)
 ):
     """Update a unit (alternative path with property_id)"""
-    # Verify property ownership
-    property = db.query(Property)\
-        .filter(Property.id == property_id, Property.user_id == current_user.id)\
-        .first()
+    from app.models.user import UserRole
+
+    # Get property - allow access for owners/agents
+    property = db.query(Property).filter(Property.id == property_id).first()
 
     if not property:
         raise HTTPException(status_code=404, detail="Property not found")
+
+    has_access = (
+        property.user_id == current_user.id or
+        current_user.role in [UserRole.OWNER, UserRole.AGENT, UserRole.ADMIN]
+    )
+
+    if not has_access:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     unit = db.query(Unit)\
         .filter(Unit.id == unit_id, Unit.property_id == property_id)\
