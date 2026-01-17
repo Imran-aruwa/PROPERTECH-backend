@@ -107,11 +107,23 @@ def list_properties(
     current_user: User = Depends(get_current_user)
 ):
     """Get all properties for current user"""
+    from app.models.user import UserRole
+
+    # First try to get properties linked to this user
     properties = db.query(Property)\
         .filter(Property.user_id == current_user.id)\
         .offset(skip)\
         .limit(limit)\
         .all()
+
+    # If no properties and user is owner, get ALL properties and link them
+    if not properties and current_user.role == UserRole.OWNER:
+        properties = db.query(Property).offset(skip).limit(limit).all()
+        if properties:
+            for prop in properties:
+                prop.user_id = current_user.id
+            db.commit()
+
     return [property_with_stats(p) for p in properties]
 
 @router.get("/{property_id}", response_model=PropertyResponse)

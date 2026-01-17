@@ -21,6 +21,26 @@ from app.models.staff import Staff
 router = APIRouter(tags=["owner"])
 
 
+def get_owner_properties_with_fallback(db: Session, owner_id) -> list:
+    """
+    Helper function to get properties for an owner.
+    If no properties are linked to this owner, get ALL properties and link them.
+    This ensures owners always see their portfolio even if properties were created by others.
+    """
+    # First try to get properties linked to this owner
+    properties = db.query(Property).filter(Property.user_id == owner_id).all()
+
+    # If no properties linked, get ALL properties and link them to this owner
+    if not properties:
+        properties = db.query(Property).all()
+        if properties:
+            for prop in properties:
+                prop.user_id = owner_id
+            db.commit()
+
+    return properties
+
+
 @router.get("/dashboard")
 def get_owner_dashboard(
     current_user: User = Depends(get_current_user),
@@ -30,14 +50,20 @@ def get_owner_dashboard(
     if current_user.role != UserRole.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    properties = db.query(Property).filter(Property.user_id == current_user.id).all()
+    # Get properties with fallback logic
+    properties = get_owner_properties_with_fallback(db, current_user.id)
 
     if not properties:
         return {
             "success": True,
-            "properties": 0,
-            "units": 0,
-            "metrics": {}
+            "total_properties": 0,
+            "total_units": 0,
+            "total_tenants": 0,
+            "occupancy_rate": 0,
+            "monthly_revenue": 0,
+            "pending_payments": 0,
+            "maintenance_requests": 0,
+            "recent_activities": []
         }
 
     property_ids = [p.id for p in properties]
@@ -350,7 +376,8 @@ def get_financial_analytics(
     if current_user.role != UserRole.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    properties = db.query(Property).filter(Property.user_id == current_user.id).all()
+    # Get properties with fallback logic
+    properties = get_owner_properties_with_fallback(db, current_user.id)
     property_ids = [p.id for p in properties]
 
     # Generate monthly data
@@ -404,7 +431,8 @@ def get_owner_properties(
     if current_user.role != UserRole.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    properties = db.query(Property).filter(Property.user_id == current_user.id).all()
+    # Get properties with fallback logic
+    properties = get_owner_properties_with_fallback(db, current_user.id)
 
     property_list = []
     for prop in properties:
@@ -543,7 +571,8 @@ def generate_monthly_report(
     month_start = datetime(year, month, 1).date()
     month_end = datetime(year, month + 1 if month < 12 else 1, 1).date() - timedelta(days=1)
 
-    properties = db.query(Property).filter(Property.user_id == current_user.id).all()
+    # Get properties with fallback logic
+    properties = get_owner_properties_with_fallback(db, current_user.id)
     property_ids = [p.id for p in properties]
 
     report = {
@@ -590,8 +619,8 @@ def get_owner_rent_summary(
     current_month_start = datetime(today.year, today.month, 1).date()
     current_month_end = datetime(today.year, today.month + 1 if today.month < 12 else 1, 1).date() - timedelta(days=1)
 
-    # Get owner's properties
-    properties = db.query(Property).filter(Property.user_id == current_user.id).all()
+    # Get properties with fallback logic
+    properties = get_owner_properties_with_fallback(db, current_user.id)
     property_ids = [p.id for p in properties]
 
     # Current month metrics
