@@ -31,13 +31,9 @@ def get_owner_properties_with_fallback(db: Session, owner_id) -> list:
     import uuid as uuid_module
     logger = logging.getLogger(__name__)
 
-    # Ensure owner_id is proper UUID for comparison
-    if isinstance(owner_id, str):
-        try:
-            owner_id = uuid_module.UUID(owner_id)
-        except ValueError:
-            logger.error(f"Invalid owner_id format: {owner_id}")
-            return []
+    # Normalize owner_id to string for consistent comparison
+    owner_id_str = str(owner_id)
+    logger.info(f"[OWNER] Getting properties for owner_id: {owner_id_str}")
 
     # Get ALL properties in the system
     all_properties = db.query(Property).all()
@@ -46,18 +42,31 @@ def get_owner_properties_with_fallback(db: Session, owner_id) -> list:
     # Link any unlinked or mislinked properties to this owner
     linked_count = 0
     for prop in all_properties:
-        if prop.user_id != owner_id:
-            logger.info(f"[OWNER] Linking property '{prop.name}' to owner {owner_id}")
+        # Compare as strings to avoid UUID type mismatch issues
+        prop_user_id_str = str(prop.user_id) if prop.user_id else None
+        logger.info(f"[OWNER] Property '{prop.name}' has user_id: {prop_user_id_str}")
+
+        if prop_user_id_str != owner_id_str:
+            logger.info(f"[OWNER] Linking property '{prop.name}' from {prop_user_id_str} to owner {owner_id_str}")
             prop.user_id = owner_id
             linked_count += 1
 
     if linked_count > 0:
-        db.commit()
-        logger.info(f"[OWNER] Linked {linked_count} properties to owner")
+        try:
+            db.commit()
+            logger.info(f"[OWNER] Successfully linked {linked_count} properties to owner")
+        except Exception as e:
+            logger.error(f"[OWNER] Failed to commit property links: {e}")
+            db.rollback()
 
     # Now get properties for this owner (should be all of them)
     properties = db.query(Property).filter(Property.user_id == owner_id).all()
-    logger.info(f"[OWNER] Returning {len(properties)} properties for owner {owner_id}")
+    logger.info(f"[OWNER] Returning {len(properties)} properties for owner {owner_id_str}")
+
+    # If still no properties, try fetching all as fallback
+    if not properties:
+        logger.warning(f"[OWNER] No properties found after linking, returning all properties")
+        properties = all_properties
 
     return properties
 
@@ -765,4 +774,63 @@ def get_owner_rent_summary(
         "electricity_collected": float(electricity_collected),
         "collection_rate": collection_rate,
         "collection_trend": collection_trend
+    }
+
+
+@router.get("/debug/dashboard")
+def debug_owner_dashboard(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Debug endpoint to diagnose dashboard issues"""
+    if current_user.role != UserRole.OWNER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    # Get current user info
+    user_info = {
+        "id": str(current_user.id),
+        "email": current_user.email,
+        "role": current_user.role.value
+    }
+
+    # Get ALL properties in database
+    all_properties = db.query(Property).all()
+    all_properties_info = []
+    for p in all_properties:
+        owner = db.query(User).filter(User.id == p.user_id).first()
+        units = db.query(Unit).filter(Unit.property_id == p.id).all()
+        all_properties_info.append({
+            "id": str(p.id),
+            "name": p.name,
+            "user_id": str(p.user_id) if p.user_id else None,
+            "owner_email": owner.email if owner else "NOT FOUND",
+            "owner_role": owner.role.value if owner else "N/A",
+            "is_current_user": str(p.user_id) == str(current_user.id) if p.user_id else False,
+            "unit_count": len(units),
+            "units": [{"id": str(u.id), "number": u.unit_number, "status": u.status} for u in units]
+        })
+
+    # Try getting properties with fallback
+    properties = get_owner_properties_with_fallback(db, current_user.id)
+    fallback_properties_info = [
+        {"id": str(p.id), "name": p.name, "user_id": str(p.user_id) if p.user_id else None}
+        for p in properties
+    ]
+
+    # Get property IDs and check unit query
+    property_ids = [p.id for p in properties]
+    total_units = db.query(Unit).filter(Unit.property_id.in_(property_ids)).count() if property_ids else 0
+
+    return {
+        "success": True,
+        "current_user": user_info,
+        "all_properties_in_db": all_properties_info,
+        "properties_after_fallback": fallback_properties_info,
+        "property_ids_for_query": [str(pid) for pid in property_ids],
+        "total_units_found": total_units,
+        "diagnosis": {
+            "total_properties_in_db": len(all_properties),
+            "properties_linked_to_user": len(properties),
+            "issue_detected": len(properties) == 0 and len(all_properties) > 0
+        }
     }
