@@ -96,10 +96,15 @@ def get_owner_dashboard(
     ).count()
     occupancy_rate = (occupied_units / total_units * 100) if total_units > 0 else 0
 
-    # Revenue metrics
-    today = datetime.utcnow().date()
-    current_month_start = datetime(today.year, today.month, 1).date()
-    current_month_end = datetime(today.year, today.month + 1 if today.month < 12 else 1, 1).date() - timedelta(days=1)
+    # Revenue metrics - use datetime objects for comparisons with DateTime fields
+    today = datetime.utcnow()
+    today_date = today.date()
+    current_month_start = datetime(today.year, today.month, 1)
+    # Calculate next month start for < comparison
+    if today.month == 12:
+        next_month_start = datetime(today.year + 1, 1, 1)
+    else:
+        next_month_start = datetime(today.year, today.month + 1, 1)
 
     expected_rent = db.query(func.sum(Unit.monthly_rent))\
         .filter(and_(Unit.property_id.in_(property_ids), Unit.status == "occupied"))\
@@ -111,7 +116,7 @@ def get_owner_dashboard(
                 Payment.payment_type == PaymentType.RENT,
                 Payment.status == PaymentStatus.COMPLETED,
                 Payment.payment_date >= current_month_start,
-                Payment.payment_date <= current_month_end
+                Payment.payment_date < next_month_start
             )
         ).scalar() or 0
 
@@ -121,7 +126,7 @@ def get_owner_dashboard(
                 Payment.payment_type == PaymentType.WATER,
                 Payment.status == PaymentStatus.COMPLETED,
                 Payment.payment_date >= current_month_start,
-                Payment.payment_date <= current_month_end
+                Payment.payment_date < next_month_start
             )
         ).scalar() or 0
 
@@ -131,7 +136,7 @@ def get_owner_dashboard(
                 Payment.payment_type == PaymentType.ELECTRICITY,
                 Payment.status == PaymentStatus.COMPLETED,
                 Payment.payment_date >= current_month_start,
-                Payment.payment_date <= current_month_end
+                Payment.payment_date < next_month_start
             )
         ).scalar() or 0
 
@@ -214,9 +219,14 @@ def get_owner_property_detail(
     # Get units with tenant and payment info
     units = db.query(Unit).filter(Unit.property_id == property_id).all()
 
-    today = datetime.utcnow().date()
-    current_month_start = datetime(today.year, today.month, 1).date()
-    current_month_end = datetime(today.year, today.month + 1 if today.month < 12 else 1, 1).date() - timedelta(days=1)
+    # Use datetime objects for comparisons with DateTime fields
+    today = datetime.utcnow()
+    today_date = today.date()
+    current_month_start = datetime(today.year, today.month, 1)
+    if today.month == 12:
+        next_month_start = datetime(today.year + 1, 1, 1)
+    else:
+        next_month_start = datetime(today.year, today.month + 1, 1)
 
     # Calculate revenue metrics
     expected_rent = db.query(func.sum(Unit.monthly_rent))\
@@ -229,7 +239,7 @@ def get_owner_property_detail(
                 Payment.payment_type == PaymentType.RENT,
                 Payment.status == PaymentStatus.COMPLETED,
                 Payment.payment_date >= current_month_start,
-                Payment.payment_date <= current_month_end
+                Payment.payment_date < next_month_start
             )
         ).scalar() or 0
 
@@ -256,7 +266,7 @@ def get_owner_property_detail(
                 Payment.payment_type == PaymentType.WATER,
                 Payment.status == PaymentStatus.COMPLETED,
                 Payment.payment_date >= current_month_start,
-                Payment.payment_date <= current_month_end
+                Payment.payment_date < next_month_start
             )
         ).scalar() or 0
 
@@ -266,22 +276,24 @@ def get_owner_property_detail(
                 Payment.payment_type == PaymentType.ELECTRICITY,
                 Payment.status == PaymentStatus.COMPLETED,
                 Payment.payment_date >= current_month_start,
-                Payment.payment_date <= current_month_end
+                Payment.payment_date < next_month_start
             )
         ).scalar() or 0
 
     total_revenue = float(collected_rent + water_collected + electricity_collected)
 
     # Get previous month revenue
-    prev_month_start = datetime(today.year, today.month - 1 if today.month > 1 else 12, 1).date()
-    prev_month_end = current_month_start - timedelta(days=1)
+    if today.month == 1:
+        prev_month_start = datetime(today.year - 1, 12, 1)
+    else:
+        prev_month_start = datetime(today.year, today.month - 1, 1)
 
     previous_revenue = db.query(func.sum(Payment.amount))\
         .filter(
             and_(
                 Payment.status == PaymentStatus.COMPLETED,
                 Payment.payment_date >= prev_month_start,
-                Payment.payment_date <= prev_month_end
+                Payment.payment_date < current_month_start
             )
         ).scalar() or 0
 
@@ -298,7 +310,7 @@ def get_owner_property_detail(
                 Payment.tenant_id == tenant.id if tenant else None,
                 Payment.payment_type == PaymentType.RENT,
                 Payment.due_date >= current_month_start,
-                Payment.due_date <= current_month_end
+                Payment.due_date < next_month_start
             )
         ).first() if tenant else None
 
@@ -307,7 +319,7 @@ def get_owner_property_detail(
                 Payment.tenant_id == tenant.id if tenant else None,
                 Payment.payment_type == PaymentType.WATER,
                 Payment.due_date >= current_month_start,
-                Payment.due_date <= current_month_end
+                Payment.due_date < next_month_start
             )
         ).first() if tenant else None
 
@@ -316,13 +328,14 @@ def get_owner_property_detail(
                 Payment.tenant_id == tenant.id if tenant else None,
                 Payment.payment_type == PaymentType.ELECTRICITY,
                 Payment.due_date >= current_month_start,
-                Payment.due_date <= current_month_end
+                Payment.due_date < next_month_start
             )
         ).first() if tenant else None
 
         days_overdue = 0
         if rent_payment and rent_payment.status == PaymentStatus.PENDING and rent_payment.due_date:
-            days_overdue = max(0, (today - rent_payment.due_date).days)
+            due_date = rent_payment.due_date.date() if hasattr(rent_payment.due_date, 'date') else rent_payment.due_date
+            days_overdue = max(0, (today_date - due_date).days)
 
         unit_list.append({
             "id": str(unit.id),
@@ -340,18 +353,18 @@ def get_owner_property_detail(
 
     for i in range(11, -1, -1):
         month_date = today - timedelta(days=30*i)
-        month_start = datetime(month_date.year, month_date.month, 1).date()
+        month_start = datetime(month_date.year, month_date.month, 1)
         if month_date.month == 12:
-            month_end = datetime(month_date.year + 1, 1, 1).date() - timedelta(days=1)
+            month_next_start = datetime(month_date.year + 1, 1, 1)
         else:
-            month_end = datetime(month_date.year, month_date.month + 1, 1).date() - timedelta(days=1)
+            month_next_start = datetime(month_date.year, month_date.month + 1, 1)
 
         month_revenue = db.query(func.sum(Payment.amount))\
             .filter(
                 and_(
                     Payment.status == PaymentStatus.COMPLETED,
                     Payment.payment_date >= month_start,
-                    Payment.payment_date <= month_end
+                    Payment.payment_date < month_next_start
                 )
             ).scalar() or 0
 
@@ -403,15 +416,15 @@ def get_financial_analytics(
 
     # Generate monthly data
     monthly_data = []
-    today = datetime.utcnow().date()
+    today = datetime.utcnow()
 
     for i in range(months):
         month_date = today - timedelta(days=30*i)
-        month_start = datetime(month_date.year, month_date.month, 1).date()
+        month_start = datetime(month_date.year, month_date.month, 1)
         if month_date.month == 12:
-            month_end = datetime(month_date.year + 1, 1, 1).date() - timedelta(days=1)
+            month_next_start = datetime(month_date.year + 1, 1, 1)
         else:
-            month_end = datetime(month_date.year, month_date.month + 1, 1).date() - timedelta(days=1)
+            month_next_start = datetime(month_date.year, month_date.month + 1, 1)
 
         # Calculate metrics for this month
         expected = db.query(func.sum(Unit.monthly_rent))\
@@ -424,7 +437,7 @@ def get_financial_analytics(
                     Payment.payment_type == PaymentType.RENT,
                     Payment.status == PaymentStatus.COMPLETED,
                     Payment.payment_date >= month_start,
-                    Payment.payment_date <= month_end
+                    Payment.payment_date < month_next_start
                 )
             ).scalar() or 0
 
@@ -519,9 +532,12 @@ def get_agent_commissions(
     if current_user.role != UserRole.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    today = datetime.utcnow().date()
-    current_month_start = datetime(today.year, today.month, 1).date()
-    current_month_end = datetime(today.year, today.month + 1 if today.month < 12 else 1, 1).date() - timedelta(days=1)
+    today = datetime.utcnow()
+    current_month_start = datetime(today.year, today.month, 1)
+    if today.month == 12:
+        next_month_start = datetime(today.year + 1, 1, 1)
+    else:
+        next_month_start = datetime(today.year, today.month + 1, 1)
 
     # Calculate commissions (5% rent, 2% water, 2% electricity)
     rent_commissions = db.query(func.sum(Payment.amount * 0.05))\
@@ -530,7 +546,7 @@ def get_agent_commissions(
                 Payment.payment_type == PaymentType.RENT,
                 Payment.status == PaymentStatus.COMPLETED,
                 Payment.payment_date >= current_month_start,
-                Payment.payment_date <= current_month_end
+                Payment.payment_date < next_month_start
             )
         ).scalar() or 0
 
@@ -540,7 +556,7 @@ def get_agent_commissions(
                 Payment.payment_type == PaymentType.WATER,
                 Payment.status == PaymentStatus.COMPLETED,
                 Payment.payment_date >= current_month_start,
-                Payment.payment_date <= current_month_end
+                Payment.payment_date < next_month_start
             )
         ).scalar() or 0
 
@@ -550,15 +566,18 @@ def get_agent_commissions(
                 Payment.payment_type == PaymentType.ELECTRICITY,
                 Payment.status == PaymentStatus.COMPLETED,
                 Payment.payment_date >= current_month_start,
-                Payment.payment_date <= current_month_end
+                Payment.payment_date < next_month_start
             )
         ).scalar() or 0
 
     total_commissions = rent_commissions + water_commissions + electricity_commissions
 
+    # Calculate end of month for display
+    current_month_end = next_month_start - timedelta(seconds=1)
+
     return {
         "success": True,
-        "period": f"{current_month_start} to {current_month_end}",
+        "period": f"{current_month_start.date()} to {current_month_end.date()}",
         "commissions": {
             "rent_commission": float(rent_commissions),
             "water_commission": float(water_commissions),
@@ -589,8 +608,12 @@ def generate_monthly_report(
     if not year:
         year = datetime.utcnow().year
 
-    month_start = datetime(year, month, 1).date()
-    month_end = datetime(year, month + 1 if month < 12 else 1, 1).date() - timedelta(days=1)
+    month_start = datetime(year, month, 1)
+    if month == 12:
+        next_month_start = datetime(year + 1, 1, 1)
+    else:
+        next_month_start = datetime(year, month + 1, 1)
+    month_end = next_month_start - timedelta(seconds=1)
 
     # Get properties with fallback logic
     properties = get_owner_properties_with_fallback(db, current_user.id)
@@ -599,7 +622,7 @@ def generate_monthly_report(
     report = {
         "success": True,
         "owner": current_user.full_name,
-        "period": f"{month_start} to {month_end}",
+        "period": f"{month_start.date()} to {month_end.date()}",
         "generated_at": datetime.utcnow().isoformat()
     }
 
@@ -614,7 +637,7 @@ def generate_monthly_report(
                 Payment.payment_type == PaymentType.RENT,
                 Payment.status == PaymentStatus.COMPLETED,
                 Payment.payment_date >= month_start,
-                Payment.payment_date <= month_end
+                Payment.payment_date < next_month_start
             )
         ).scalar() or 0
 
@@ -636,9 +659,13 @@ def get_owner_rent_summary(
     if current_user.role != UserRole.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    today = datetime.utcnow().date()
-    current_month_start = datetime(today.year, today.month, 1).date()
-    current_month_end = datetime(today.year, today.month + 1 if today.month < 12 else 1, 1).date() - timedelta(days=1)
+    today = datetime.utcnow()
+    today_date = today.date()
+    current_month_start = datetime(today.year, today.month, 1)
+    if today.month == 12:
+        next_month_start = datetime(today.year + 1, 1, 1)
+    else:
+        next_month_start = datetime(today.year, today.month + 1, 1)
 
     # Get properties with fallback logic
     properties = get_owner_properties_with_fallback(db, current_user.id)
@@ -655,7 +682,7 @@ def get_owner_rent_summary(
                 Payment.payment_type == PaymentType.RENT,
                 Payment.status == PaymentStatus.COMPLETED,
                 Payment.payment_date >= current_month_start,
-                Payment.payment_date <= current_month_end
+                Payment.payment_date < next_month_start
             )
         ).scalar() or 0
 
@@ -682,7 +709,7 @@ def get_owner_rent_summary(
                 Payment.payment_type == PaymentType.WATER,
                 Payment.status == PaymentStatus.COMPLETED,
                 Payment.payment_date >= current_month_start,
-                Payment.payment_date <= current_month_end
+                Payment.payment_date < next_month_start
             )
         ).scalar() or 0
 
@@ -692,7 +719,7 @@ def get_owner_rent_summary(
                 Payment.payment_type == PaymentType.ELECTRICITY,
                 Payment.status == PaymentStatus.COMPLETED,
                 Payment.payment_date >= current_month_start,
-                Payment.payment_date <= current_month_end
+                Payment.payment_date < next_month_start
             )
         ).scalar() or 0
 
@@ -705,11 +732,11 @@ def get_owner_rent_summary(
 
     for i in range(5, -1, -1):
         month_date = today - timedelta(days=30 * i)
-        month_start = datetime(month_date.year, month_date.month, 1).date()
+        month_start = datetime(month_date.year, month_date.month, 1)
         if month_date.month == 12:
-            month_end = datetime(month_date.year + 1, 1, 1).date() - timedelta(days=1)
+            month_next_start = datetime(month_date.year + 1, 1, 1)
         else:
-            month_end = datetime(month_date.year, month_date.month + 1, 1).date() - timedelta(days=1)
+            month_next_start = datetime(month_date.year, month_date.month + 1, 1)
 
         month_expected = float(expected_rent) if i == 0 else float(expected_rent * 0.95)  # Approximate
         month_collected = db.query(func.sum(Payment.amount))\
@@ -718,7 +745,7 @@ def get_owner_rent_summary(
                     Payment.payment_type == PaymentType.RENT,
                     Payment.status == PaymentStatus.COMPLETED,
                     Payment.payment_date >= month_start,
-                    Payment.payment_date <= month_end
+                    Payment.payment_date < month_next_start
                 )
             ).scalar() or 0
 
