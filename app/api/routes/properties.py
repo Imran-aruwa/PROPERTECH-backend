@@ -225,22 +225,30 @@ def list_properties(
 ):
     """Get all properties for current user"""
     from app.models.user import UserRole
+    import logging
+    logger = logging.getLogger(__name__)
 
-    # First try to get properties linked to this user
+    # For owners, ALWAYS link all properties to them first
+    if current_user.role == UserRole.OWNER:
+        all_properties = db.query(Property).all()
+        linked_count = 0
+        for prop in all_properties:
+            if prop.user_id != current_user.id:
+                logger.info(f"[PROPERTIES] Linking property '{prop.name}' to owner {current_user.id}")
+                prop.user_id = current_user.id
+                linked_count += 1
+        if linked_count > 0:
+            db.commit()
+            logger.info(f"[PROPERTIES] Linked {linked_count} properties to owner")
+
+    # Now get properties for this user
     properties = db.query(Property)\
         .filter(Property.user_id == current_user.id)\
         .offset(skip)\
         .limit(limit)\
         .all()
 
-    # If no properties and user is owner, get ALL properties and link them
-    if not properties and current_user.role == UserRole.OWNER:
-        properties = db.query(Property).offset(skip).limit(limit).all()
-        if properties:
-            for prop in properties:
-                prop.user_id = current_user.id
-            db.commit()
-
+    logger.info(f"[PROPERTIES] Returning {len(properties)} properties for user {current_user.id}")
     return [property_with_stats(p) for p in properties]
 
 @router.get("/{property_id}", response_model=PropertyResponse)

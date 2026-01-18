@@ -24,19 +24,40 @@ router = APIRouter(tags=["owner"])
 def get_owner_properties_with_fallback(db: Session, owner_id) -> list:
     """
     Helper function to get properties for an owner.
-    If no properties are linked to this owner, get ALL properties and link them.
-    This ensures owners always see their portfolio even if properties were created by others.
+    ALWAYS links ALL properties to the owner to ensure dashboard shows correct counts.
+    This is necessary because properties may be created by agents/admins but belong to owner.
     """
-    # First try to get properties linked to this owner
-    properties = db.query(Property).filter(Property.user_id == owner_id).all()
+    import logging
+    import uuid as uuid_module
+    logger = logging.getLogger(__name__)
 
-    # If no properties linked, get ALL properties and link them to this owner
-    if not properties:
-        properties = db.query(Property).all()
-        if properties:
-            for prop in properties:
-                prop.user_id = owner_id
-            db.commit()
+    # Ensure owner_id is proper UUID for comparison
+    if isinstance(owner_id, str):
+        try:
+            owner_id = uuid_module.UUID(owner_id)
+        except ValueError:
+            logger.error(f"Invalid owner_id format: {owner_id}")
+            return []
+
+    # Get ALL properties in the system
+    all_properties = db.query(Property).all()
+    logger.info(f"[OWNER] Total properties in database: {len(all_properties)}")
+
+    # Link any unlinked or mislinked properties to this owner
+    linked_count = 0
+    for prop in all_properties:
+        if prop.user_id != owner_id:
+            logger.info(f"[OWNER] Linking property '{prop.name}' to owner {owner_id}")
+            prop.user_id = owner_id
+            linked_count += 1
+
+    if linked_count > 0:
+        db.commit()
+        logger.info(f"[OWNER] Linked {linked_count} properties to owner")
+
+    # Now get properties for this owner (should be all of them)
+    properties = db.query(Property).filter(Property.user_id == owner_id).all()
+    logger.info(f"[OWNER] Returning {len(properties)} properties for owner {owner_id}")
 
     return properties
 
