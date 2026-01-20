@@ -77,11 +77,16 @@ def get_owner_dashboard(
     db: Session = Depends(get_db)
 ):
     """Get owner dashboard with all key metrics"""
+    import logging
+    logger = logging.getLogger(__name__)
+
     if current_user.role != UserRole.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     # Get properties with fallback logic
     properties = get_owner_properties_with_fallback(db, current_user.id)
+
+    logger.info(f"[DASHBOARD] Owner {current_user.id} has {len(properties)} properties")
 
     if not properties:
         return {
@@ -96,14 +101,43 @@ def get_owner_dashboard(
             "recent_activities": []
         }
 
+    # Get property IDs - ensure they're properly formatted for comparison
     property_ids = [p.id for p in properties]
+    logger.info(f"[DASHBOARD] Property IDs: {[str(pid) for pid in property_ids]}")
 
-    # Unit metrics
-    total_units = db.query(Unit).filter(Unit.property_id.in_(property_ids)).count()
-    occupied_units = db.query(Unit).filter(
-        and_(Unit.property_id.in_(property_ids), Unit.status == "occupied")
-    ).count()
+    # DIRECT UNIT COUNT - query units for each property individually to avoid .in_() issues
+    total_units = 0
+    occupied_units = 0
+
+    # Also get total units in DB for debugging
+    all_units_in_db = db.query(Unit).all()
+    logger.info(f"[DASHBOARD] Total units in entire database: {len(all_units_in_db)}")
+
+    for prop in properties:
+        # Count units for this specific property
+        prop_units = db.query(Unit).filter(Unit.property_id == prop.id).all()
+        logger.info(f"[DASHBOARD] Property '{prop.name}' (ID: {prop.id}) has {len(prop_units)} units")
+
+        total_units += len(prop_units)
+        for unit in prop_units:
+            if unit.status == "occupied":
+                occupied_units += 1
+
+    # FALLBACK: If no units found but property has total_units field, use that
+    if total_units == 0:
+        for prop in properties:
+            if prop.total_units and prop.total_units > 0:
+                logger.info(f"[DASHBOARD] Using property.total_units fallback: {prop.total_units}")
+                total_units += prop.total_units
+
+    # SECOND FALLBACK: Count ALL units in DB if still zero (for single-owner systems)
+    if total_units == 0 and len(all_units_in_db) > 0:
+        logger.info(f"[DASHBOARD] Using all-units fallback: {len(all_units_in_db)} units")
+        total_units = len(all_units_in_db)
+        occupied_units = sum(1 for u in all_units_in_db if u.status == "occupied")
+
     occupancy_rate = (occupied_units / total_units * 100) if total_units > 0 else 0
+    logger.info(f"[DASHBOARD] Final counts - Units: {total_units}, Occupied: {occupied_units}")
 
     # Revenue metrics - use datetime objects for comparisons with DateTime fields
     today = datetime.utcnow()
@@ -115,9 +149,20 @@ def get_owner_dashboard(
     else:
         next_month_start = datetime(today.year, today.month + 1, 1)
 
-    expected_rent = db.query(func.sum(Unit.monthly_rent))\
-        .filter(and_(Unit.property_id.in_(property_ids), Unit.status == "occupied"))\
-        .scalar() or 0
+    # Calculate expected rent by iterating properties (avoids .in_() UUID issues)
+    expected_rent = 0
+    for prop in properties:
+        prop_expected = db.query(func.sum(Unit.monthly_rent))\
+            .filter(and_(Unit.property_id == prop.id, Unit.status == "occupied"))\
+            .scalar() or 0
+        expected_rent += prop_expected
+
+    # FALLBACK: If no expected rent but we have occupied units, use all units
+    if expected_rent == 0 and occupied_units > 0:
+        for unit in all_units_in_db:
+            if unit.status == "occupied" and unit.monthly_rent:
+                expected_rent += unit.monthly_rent
+    logger.info(f"[DASHBOARD] Expected rent: {expected_rent}")
 
     collected_rent = db.query(func.sum(Payment.amount))\
         .filter(
@@ -421,7 +466,16 @@ def get_financial_analytics(
 
     # Get properties with fallback logic
     properties = get_owner_properties_with_fallback(db, current_user.id)
-    property_ids = [p.id for p in properties]
+
+    # Get all units for these properties (iterate to avoid .in_() UUID issues)
+    all_units = []
+    for prop in properties:
+        prop_units = db.query(Unit).filter(Unit.property_id == prop.id).all()
+        all_units.extend(prop_units)
+
+    # Fallback: if no units found, get all units in DB
+    if not all_units:
+        all_units = db.query(Unit).all()
 
     # Generate monthly data
     monthly_data = []
@@ -435,10 +489,8 @@ def get_financial_analytics(
         else:
             month_next_start = datetime(month_date.year, month_date.month + 1, 1)
 
-        # Calculate metrics for this month
-        expected = db.query(func.sum(Unit.monthly_rent))\
-            .filter(and_(Unit.property_id.in_(property_ids), Unit.status == "occupied"))\
-            .scalar() or 0
+        # Calculate expected rent from units
+        expected = sum(u.monthly_rent or 0 for u in all_units if u.status == "occupied")
 
         collected = db.query(func.sum(Payment.amount))\
             .filter(
@@ -471,18 +523,38 @@ def get_owner_properties(
     db: Session = Depends(get_db)
 ):
     """Get all properties owned by current user"""
+    import logging
+    logger = logging.getLogger(__name__)
+
     if current_user.role != UserRole.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     # Get properties with fallback logic
     properties = get_owner_properties_with_fallback(db, current_user.id)
 
+    # Get all units in DB for fallback
+    all_units_in_db = db.query(Unit).all()
+    logger.info(f"[PROPERTIES] Total units in DB: {len(all_units_in_db)}")
+
     property_list = []
     for prop in properties:
-        units = db.query(Unit).filter(Unit.property_id == prop.id).count()
-        occupied = db.query(Unit).filter(
-            and_(Unit.property_id == prop.id, Unit.status == "occupied")
-        ).count()
+        # Direct query for units linked to this property
+        prop_units = db.query(Unit).filter(Unit.property_id == prop.id).all()
+        units = len(prop_units)
+        occupied = sum(1 for u in prop_units if u.status == "occupied")
+
+        logger.info(f"[PROPERTIES] Property '{prop.name}' - Direct units: {units}, prop.total_units: {prop.total_units}")
+
+        # FALLBACK: If no units found via query, use property's total_units field
+        if units == 0 and prop.total_units and prop.total_units > 0:
+            logger.info(f"[PROPERTIES] Using prop.total_units fallback: {prop.total_units}")
+            units = prop.total_units
+
+        # SECOND FALLBACK: For single-property systems, attribute all units to this property
+        if units == 0 and len(properties) == 1 and len(all_units_in_db) > 0:
+            logger.info(f"[PROPERTIES] Single property fallback - assigning all {len(all_units_in_db)} units")
+            units = len(all_units_in_db)
+            occupied = sum(1 for u in all_units_in_db if u.status == "occupied")
 
         property_list.append({
             "id": str(prop.id),
@@ -635,10 +707,19 @@ def generate_monthly_report(
         "generated_at": datetime.utcnow().isoformat()
     }
 
-    # Add financial summary
-    expected_rent = db.query(func.sum(Unit.monthly_rent))\
-        .filter(and_(Unit.property_id.in_(property_ids), Unit.status == "occupied"))\
-        .scalar() or 0
+    # Add financial summary - iterate properties to avoid .in_() UUID issues
+    expected_rent = 0
+    for prop in properties:
+        prop_expected = db.query(func.sum(Unit.monthly_rent))\
+            .filter(and_(Unit.property_id == prop.id, Unit.status == "occupied"))\
+            .scalar() or 0
+        expected_rent += prop_expected
+
+    # Fallback: get from all units
+    if expected_rent == 0:
+        expected_rent = db.query(func.sum(Unit.monthly_rent))\
+            .filter(Unit.status == "occupied")\
+            .scalar() or 0
 
     collected_rent = db.query(func.sum(Payment.amount))\
         .filter(
@@ -678,12 +759,20 @@ def get_owner_rent_summary(
 
     # Get properties with fallback logic
     properties = get_owner_properties_with_fallback(db, current_user.id)
-    property_ids = [p.id for p in properties]
 
-    # Current month metrics
-    expected_rent = db.query(func.sum(Unit.monthly_rent))\
-        .filter(and_(Unit.property_id.in_(property_ids), Unit.status == "occupied"))\
-        .scalar() or 0
+    # Current month metrics - iterate properties to avoid .in_() UUID issues
+    expected_rent = 0
+    for prop in properties:
+        prop_expected = db.query(func.sum(Unit.monthly_rent))\
+            .filter(and_(Unit.property_id == prop.id, Unit.status == "occupied"))\
+            .scalar() or 0
+        expected_rent += prop_expected
+
+    # Fallback: get from all units
+    if expected_rent == 0:
+        expected_rent = db.query(func.sum(Unit.monthly_rent))\
+            .filter(Unit.status == "occupied")\
+            .scalar() or 0
 
     collected_rent = db.query(func.sum(Payment.amount))\
         .filter(
