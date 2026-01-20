@@ -674,3 +674,82 @@ async def fix_kuscco_homes():
         }
     finally:
         db.close()
+
+
+@app.get("/api/debug/schema", tags=["Debug"])
+async def debug_schema():
+    """
+    Debug endpoint to check database schema.
+    Shows what columns exist in the payments table.
+    """
+    from app.database import SessionLocal
+    from sqlalchemy import text
+
+    db = SessionLocal()
+    try:
+        # Check payments table columns
+        result = db.execute(text("""
+            SELECT column_name, data_type, is_nullable
+            FROM information_schema.columns
+            WHERE table_name = 'payments'
+            ORDER BY ordinal_position
+        """))
+        payments_columns = [{"name": row[0], "type": row[1], "nullable": row[2]} for row in result]
+
+        # Check if paymenttype enum exists
+        result = db.execute(text("""
+            SELECT typname FROM pg_type WHERE typname = 'paymenttype'
+        """))
+        enum_exists = result.fetchone() is not None
+
+        # Check alembic version
+        result = db.execute(text("""
+            SELECT version_num FROM alembic_version
+        """))
+        alembic_version = result.fetchone()
+
+        return {
+            "success": True,
+            "payments_columns": payments_columns,
+            "paymenttype_enum_exists": enum_exists,
+            "alembic_version": alembic_version[0] if alembic_version else None,
+            "expected_version": "d4e5f6g7h8i9",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    finally:
+        db.close()
+
+
+@app.post("/api/debug/run-migration", tags=["Debug"])
+async def run_migration_manually():
+    """
+    Manually run pending migrations.
+    """
+    try:
+        from alembic.config import Config
+        from alembic import command
+
+        alembic_cfg = Config("alembic.ini")
+        command.upgrade(alembic_cfg, "head")
+
+        return {
+            "success": True,
+            "message": "Migrations executed successfully",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "timestamp": datetime.utcnow().isoformat()
+        }
