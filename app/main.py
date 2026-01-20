@@ -580,3 +580,97 @@ async def create_missing_units(num_units: int = 10, default_rent: float = 15000)
         }
     finally:
         db.close()
+
+
+@app.post("/api/debug/fix-kuscco-homes", tags=["Debug"])
+async def fix_kuscco_homes():
+    """
+    SPECIFIC FIX: Create 120 units for Kuscco Homes property.
+    NO AUTHENTICATION REQUIRED - one-time fix endpoint.
+    """
+    from app.database import SessionLocal
+    from app.models.property import Property, Unit
+    from app.models.user import User, UserRole
+    import uuid
+
+    db = SessionLocal()
+    try:
+        # Find Kuscco Homes property (case-insensitive search)
+        property = db.query(Property).filter(
+            Property.name.ilike("%kuscco%")
+        ).first()
+
+        if not property:
+            # List all properties to help debugging
+            all_props = db.query(Property).all()
+            return {
+                "success": False,
+                "error": "Kuscco Homes property not found",
+                "available_properties": [{"id": str(p.id), "name": p.name} for p in all_props],
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
+        # Get existing units count
+        existing_units = db.query(Unit).filter(Unit.property_id == property.id).all()
+        existing_count = len(existing_units)
+
+        # Delete existing units if any (fresh start)
+        if existing_count > 0:
+            for unit in existing_units:
+                db.delete(unit)
+            db.flush()
+
+        # Create exactly 120 units
+        created_units = []
+        for i in range(1, 121):  # 1 to 120
+            new_unit = Unit(
+                id=uuid.uuid4(),
+                property_id=property.id,
+                unit_number=f"Unit {i}",
+                bedrooms=1,
+                bathrooms=1.0,
+                monthly_rent=15000.0,  # Default rent
+                status="vacant"
+            )
+            db.add(new_unit)
+            created_units.append(f"Unit {i}")
+
+        # Update property's total_units field
+        property.total_units = 120
+
+        # Also ensure property is linked to an owner
+        owner = db.query(User).filter(User.role == UserRole.OWNER).first()
+        if owner and property.user_id != owner.id:
+            property.user_id = owner.id
+
+        db.commit()
+
+        # Verify the count
+        final_count = db.query(Unit).filter(Unit.property_id == property.id).count()
+
+        return {
+            "success": True,
+            "message": f"Successfully created 120 units for Kuscco Homes",
+            "property": {
+                "id": str(property.id),
+                "name": property.name,
+                "user_id": str(property.user_id),
+                "total_units": property.total_units
+            },
+            "previous_units": existing_count,
+            "units_created": 120,
+            "final_unit_count": final_count,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Fix Kuscco Homes error: {e}")
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    finally:
+        db.close()
