@@ -728,7 +728,7 @@ async def debug_schema():
         db.close()
 
 
-@app.post("/api/debug/run-migration", tags=["Debug"])
+@app.get("/api/debug/run-migration", tags=["Debug"])
 async def run_migration_manually():
     """
     Manually run pending migrations.
@@ -753,3 +753,126 @@ async def run_migration_manually():
             "traceback": traceback.format_exc(),
             "timestamp": datetime.utcnow().isoformat()
         }
+
+
+@app.get("/api/debug/fix-payments-schema", tags=["Debug"])
+async def fix_payments_schema():
+    """
+    Direct SQL fix to add missing columns to payments table.
+    This bypasses alembic if it's having issues.
+    """
+    from app.database import SessionLocal
+    from sqlalchemy import text
+
+    db = SessionLocal()
+    results = []
+
+    try:
+        # Check which columns exist
+        existing = db.execute(text("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'payments'
+        """))
+        existing_columns = [row[0] for row in existing]
+
+        # Create enum type if not exists
+        try:
+            db.execute(text("""
+                DO $$ BEGIN
+                    CREATE TYPE paymenttype AS ENUM (
+                        'rent', 'water', 'electricity', 'garbage', 'deposit',
+                        'maintenance', 'penalty', 'subscription', 'one_off'
+                    );
+                EXCEPTION
+                    WHEN duplicate_object THEN null;
+                END $$;
+            """))
+            db.commit()
+            results.append("Created paymenttype enum (or already exists)")
+        except Exception as e:
+            results.append(f"Enum creation: {str(e)}")
+            db.rollback()
+
+        # Add payment_type column if missing
+        if 'payment_type' not in existing_columns:
+            try:
+                db.execute(text("""
+                    ALTER TABLE payments ADD COLUMN payment_type paymenttype
+                """))
+                db.commit()
+                results.append("Added payment_type column")
+            except Exception as e:
+                results.append(f"payment_type: {str(e)}")
+                db.rollback()
+        else:
+            results.append("payment_type already exists")
+
+        # Add tenant_id column if missing
+        if 'tenant_id' not in existing_columns:
+            try:
+                db.execute(text("""
+                    ALTER TABLE payments ADD COLUMN tenant_id UUID
+                """))
+                db.commit()
+                results.append("Added tenant_id column")
+            except Exception as e:
+                results.append(f"tenant_id: {str(e)}")
+                db.rollback()
+        else:
+            results.append("tenant_id already exists")
+
+        # Add payment_date column if missing
+        if 'payment_date' not in existing_columns:
+            try:
+                db.execute(text("""
+                    ALTER TABLE payments ADD COLUMN payment_date TIMESTAMP
+                """))
+                db.commit()
+                results.append("Added payment_date column")
+            except Exception as e:
+                results.append(f"payment_date: {str(e)}")
+                db.rollback()
+        else:
+            results.append("payment_date already exists")
+
+        # Add due_date column if missing
+        if 'due_date' not in existing_columns:
+            try:
+                db.execute(text("""
+                    ALTER TABLE payments ADD COLUMN due_date TIMESTAMP
+                """))
+                db.commit()
+                results.append("Added due_date column")
+            except Exception as e:
+                results.append(f"due_date: {str(e)}")
+                db.rollback()
+        else:
+            results.append("due_date already exists")
+
+        # Update alembic version to mark migration as done
+        try:
+            db.execute(text("""
+                UPDATE alembic_version SET version_num = 'd4e5f6g7h8i9'
+            """))
+            db.commit()
+            results.append("Updated alembic version to d4e5f6g7h8i9")
+        except Exception as e:
+            results.append(f"alembic version update: {str(e)}")
+            db.rollback()
+
+        return {
+            "success": True,
+            "results": results,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "results": results,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    finally:
+        db.close()
