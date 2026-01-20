@@ -452,18 +452,36 @@ async def debug_database():
         owners = db.query(User).filter(User.role == UserRole.OWNER).all()
         owner_list = [{"id": str(o.id), "email": o.email} for o in owners]
 
-        # Get properties with their owner info
+        # Get properties with their owner info AND unit counts
         properties = db.query(Property).all()
         property_list = []
         for p in properties:
             owner = db.query(User).filter(User.id == p.user_id).first()
+            # Count units for this property
+            property_units = db.query(Unit).filter(Unit.property_id == p.id).all()
             property_list.append({
                 "id": str(p.id),
                 "name": p.name,
                 "user_id": str(p.user_id) if p.user_id else None,
                 "owner_email": owner.email if owner else "NOT FOUND",
-                "owner_exists": owner is not None
+                "owner_exists": owner is not None,
+                "total_units_field": p.total_units,
+                "actual_units_in_db": len(property_units),
+                "units": [{"id": str(u.id), "unit_number": u.unit_number, "status": u.status, "rent": u.monthly_rent} for u in property_units]
             })
+
+        # Get ALL units regardless of property
+        all_units = db.query(Unit).all()
+        all_units_list = [
+            {
+                "id": str(u.id),
+                "property_id": str(u.property_id) if u.property_id else None,
+                "unit_number": u.unit_number,
+                "status": u.status,
+                "monthly_rent": u.monthly_rent
+            }
+            for u in all_units
+        ]
 
         return {
             "success": True,
@@ -477,14 +495,84 @@ async def debug_database():
             },
             "owners": owner_list,
             "properties": property_list,
+            "all_units": all_units_list,
             "diagnosis": {
                 "has_owners": owner_count > 0,
                 "has_properties": property_count > 0,
-                "all_properties_have_owners": all(p["owner_exists"] for p in property_list) if property_list else True
+                "has_units": unit_count > 0,
+                "all_properties_have_owners": all(p["owner_exists"] for p in property_list) if property_list else True,
+                "properties_missing_units": [p["name"] for p in property_list if p["actual_units_in_db"] == 0]
             }
         }
     except Exception as e:
         logger.error(f"Debug endpoint error: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    finally:
+        db.close()
+
+
+@app.post("/api/debug/create-units", tags=["Debug"])
+async def create_missing_units(num_units: int = 10, default_rent: float = 15000):
+    """
+    AUTO-FIX: Create units for properties that don't have any.
+    NO AUTHENTICATION REQUIRED - use for troubleshooting.
+
+    Parameters:
+    - num_units: Number of units to create per property (default: 10)
+    - default_rent: Default monthly rent for each unit (default: 15000)
+    """
+    from app.database import SessionLocal
+    from app.models.property import Property, Unit
+    import uuid
+
+    db = SessionLocal()
+    try:
+        # Find properties with no units
+        properties = db.query(Property).all()
+        created_units = []
+
+        for prop in properties:
+            existing_units = db.query(Unit).filter(Unit.property_id == prop.id).count()
+
+            if existing_units == 0:
+                # Create units for this property
+                units_to_create = prop.total_units if prop.total_units and prop.total_units > 0 else num_units
+
+                for i in range(1, units_to_create + 1):
+                    new_unit = Unit(
+                        id=uuid.uuid4(),
+                        property_id=prop.id,
+                        unit_number=f"Unit {i}",
+                        bedrooms=1,
+                        bathrooms=1.0,
+                        monthly_rent=default_rent,
+                        status="vacant"
+                    )
+                    db.add(new_unit)
+                    created_units.append({
+                        "property": prop.name,
+                        "unit_number": f"Unit {i}",
+                        "rent": default_rent
+                    })
+
+                # Update property's total_units field
+                prop.total_units = units_to_create
+
+        db.commit()
+
+        return {
+            "success": True,
+            "message": f"Created {len(created_units)} units",
+            "created_units": created_units,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Create units error: {e}")
         return {
             "success": False,
             "error": str(e),
