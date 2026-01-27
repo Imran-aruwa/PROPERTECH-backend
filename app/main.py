@@ -402,12 +402,12 @@ async def startup_event():
             logger.info(f"[STARTUP] Found owner: {owner.email} (ID: {owner_id_str})")
 
             # Use raw SQL to find properties NOT linked to an owner-role user
-            # This avoids ORM UUID type mismatch issues
+            # Cast role to TEXT to avoid PostgreSQL enum type comparison issues
             orphaned = db.execute(text("""
                 SELECT p.id, p.name, CAST(p.user_id AS TEXT) as uid
                 FROM properties p
                 LEFT JOIN users u ON p.user_id = u.id
-                WHERE u.id IS NULL OR u.role != 'owner'
+                WHERE u.id IS NULL OR LOWER(CAST(u.role AS TEXT)) != 'owner'
             """)).fetchall()
 
             if orphaned:
@@ -422,7 +422,7 @@ async def startup_event():
                         WHERE id IN (
                             SELECT p.id FROM properties p
                             LEFT JOIN users u ON p.user_id = u.id
-                            WHERE u.id IS NULL OR u.role != 'owner'
+                            WHERE u.id IS NULL OR LOWER(CAST(u.role AS TEXT)) != 'owner'
                         )
                     """),
                     {"owner_id": owner_id_str}
@@ -1031,11 +1031,11 @@ async def fix_all_issues():
             owner = db.query(User).filter(User.role == UserRole.OWNER).first()
             if owner:
                 owner_id_str = str(owner.id)
-                # Find orphaned properties via raw SQL
+                # Find orphaned properties via raw SQL (cast role to TEXT to avoid enum issues)
                 orphaned = db.execute(text("""
                     SELECT p.id, p.name FROM properties p
                     LEFT JOIN users u ON p.user_id = u.id
-                    WHERE u.id IS NULL OR u.role != 'owner'
+                    WHERE u.id IS NULL OR LOWER(CAST(u.role AS TEXT)) != 'owner'
                 """)).fetchall()
 
                 if orphaned:
@@ -1045,7 +1045,7 @@ async def fix_all_issues():
                             WHERE id IN (
                                 SELECT p.id FROM properties p
                                 LEFT JOIN users u ON p.user_id = u.id
-                                WHERE u.id IS NULL OR u.role != 'owner'
+                                WHERE u.id IS NULL OR LOWER(CAST(u.role AS TEXT)) != 'owner'
                             )
                         """),
                         {"owner_id": owner_id_str}
