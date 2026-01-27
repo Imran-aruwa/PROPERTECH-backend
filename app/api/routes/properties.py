@@ -225,23 +225,38 @@ def list_properties(
 ):
     """Get all properties for current user"""
     from app.models.user import UserRole
+    from sqlalchemy import text
     import logging
     logger = logging.getLogger(__name__)
 
-    # For owners, ALWAYS link all properties to them first
+    # For owners, ensure all properties are linked via raw SQL (avoids UUID type issues)
     if current_user.role == UserRole.OWNER:
-        all_properties = db.query(Property).all()
-        linked_count = 0
-        for prop in all_properties:
-            if prop.user_id != current_user.id:
-                logger.info(f"[PROPERTIES] Linking property '{prop.name}' to owner {current_user.id}")
-                prop.user_id = current_user.id
-                linked_count += 1
-        if linked_count > 0:
-            db.commit()
-            logger.info(f"[PROPERTIES] Linked {linked_count} properties to owner")
+        owner_id_str = str(current_user.id)
+        try:
+            # Check if owner already has properties
+            count_result = db.execute(
+                text("SELECT COUNT(*) FROM properties WHERE CAST(user_id AS TEXT) = :oid"),
+                {"oid": owner_id_str}
+            )
+            owner_prop_count = count_result.scalar()
 
-    # Now get properties for this user
+            total_result = db.execute(text("SELECT COUNT(*) FROM properties"))
+            total_count = total_result.scalar()
+
+            if owner_prop_count == 0 and total_count > 0:
+                logger.info(f"[PROPERTIES] Owner has 0/{total_count} properties, fixing via SQL")
+                db.execute(
+                    text("UPDATE properties SET user_id = CAST(:oid AS UUID)"),
+                    {"oid": owner_id_str}
+                )
+                db.commit()
+                db.expire_all()
+                logger.info(f"[PROPERTIES] Linked all properties to owner {owner_id_str}")
+        except Exception as e:
+            logger.error(f"[PROPERTIES] SQL fix failed: {e}")
+            db.rollback()
+
+    # Get properties for this user
     properties = db.query(Property)\
         .filter(Property.user_id == current_user.id)\
         .offset(skip)\

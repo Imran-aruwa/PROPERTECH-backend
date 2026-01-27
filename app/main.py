@@ -321,6 +321,60 @@ async def startup_event():
     except Exception as migration_error:
         logger.warning(f"[WARN] Migration failed: {migration_error} - continuing anyway")
 
+    # ===== DIRECT SCHEMA FIX: Ensure payment columns exist =====
+    logger.info("Checking payments table schema...")
+    try:
+        from app.database import SessionLocal
+        from sqlalchemy import text
+
+        db = SessionLocal()
+        try:
+            # Check if we're on PostgreSQL (not SQLite)
+            result = db.execute(text("SELECT version()"))
+            db_version = result.fetchone()
+            if db_version and 'PostgreSQL' in str(db_version[0]):
+                logger.info(f"[INFO] PostgreSQL detected: {db_version[0][:50]}...")
+
+                # Check for payment_type column
+                result = db.execute(text("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'payments' AND column_name = 'payment_type'
+                """))
+                if not result.fetchone():
+                    logger.info("[FIX] Adding missing payment columns...")
+
+                    # Create enum type if not exists
+                    db.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE paymenttype AS ENUM (
+                                'rent', 'water', 'electricity', 'garbage', 'deposit',
+                                'maintenance', 'penalty', 'subscription', 'one_off'
+                            );
+                        EXCEPTION WHEN duplicate_object THEN null;
+                        END $$;
+                    """))
+                    db.commit()
+
+                    # Add columns one by one with IF NOT EXISTS
+                    db.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_type paymenttype"))
+                    db.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS tenant_id UUID"))
+                    db.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_date TIMESTAMP"))
+                    db.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS due_date TIMESTAMP"))
+                    db.commit()
+
+                    logger.info("[OK] Payment columns added successfully!")
+                else:
+                    logger.info("[OK] Payment schema is correct")
+            else:
+                logger.info("[INFO] Non-PostgreSQL database, skipping schema check")
+        except Exception as schema_error:
+            logger.warning(f"[WARN] Schema check/fix failed: {schema_error}")
+            db.rollback()
+        finally:
+            db.close()
+    except Exception as db_error:
+        logger.warning(f"[WARN] Could not check schema: {db_error}")
+
     # Initialize database NON-BLOCKING
     logger.info("Initializing database tables...")
     try:
@@ -331,12 +385,12 @@ async def startup_event():
     except Exception as init_error:
         logger.warning(f"[WARN] Database init failed: {init_error} - tables may not exist")
 
-    # ONE-TIME FIX: Reassign orphaned properties to owner
+    # ONE-TIME FIX: Reassign orphaned properties to owner using raw SQL
     logger.info("Checking for orphaned properties...")
     try:
         from app.database import SessionLocal
         from app.models.user import User, UserRole
-        from app.models.property import Property
+        from sqlalchemy import text
 
         db = SessionLocal()
 
@@ -344,20 +398,37 @@ async def startup_event():
         owner = db.query(User).filter(User.role == UserRole.OWNER).first()
 
         if owner:
-            # Find all properties linked to non-OWNER users
-            all_properties = db.query(Property).all()
-            fixed_count = 0
+            owner_id_str = str(owner.id)
+            logger.info(f"[STARTUP] Found owner: {owner.email} (ID: {owner_id_str})")
 
-            for prop in all_properties:
-                prop_owner = db.query(User).filter(User.id == prop.user_id).first()
-                if not prop_owner or prop_owner.role != UserRole.OWNER:
-                    logger.info(f"  Fixing property '{prop.name}' -> owner {owner.email}")
-                    prop.user_id = owner.id
-                    fixed_count += 1
+            # Use raw SQL to find properties NOT linked to an owner-role user
+            # This avoids ORM UUID type mismatch issues
+            orphaned = db.execute(text("""
+                SELECT p.id, p.name, CAST(p.user_id AS TEXT) as uid
+                FROM properties p
+                LEFT JOIN users u ON p.user_id = u.id
+                WHERE u.id IS NULL OR u.role != 'owner'
+            """)).fetchall()
 
-            if fixed_count > 0:
+            if orphaned:
+                logger.info(f"[STARTUP] Found {len(orphaned)} orphaned properties, fixing...")
+                for row in orphaned:
+                    logger.info(f"  Fixing property '{row[1]}' (current user_id: {row[2]}) -> {owner.email}")
+
+                # Fix all orphaned properties in one SQL statement
+                db.execute(
+                    text("""
+                        UPDATE properties SET user_id = CAST(:owner_id AS UUID)
+                        WHERE id IN (
+                            SELECT p.id FROM properties p
+                            LEFT JOIN users u ON p.user_id = u.id
+                            WHERE u.id IS NULL OR u.role != 'owner'
+                        )
+                    """),
+                    {"owner_id": owner_id_str}
+                )
                 db.commit()
-                logger.info(f"[OK] Fixed {fixed_count} orphaned properties -> {owner.email}")
+                logger.info(f"[OK] Fixed {len(orphaned)} orphaned properties -> {owner.email}")
             else:
                 logger.info("[OK] No orphaned properties found")
         else:
@@ -865,6 +936,168 @@ async def fix_payments_schema():
             "results": results,
             "timestamp": datetime.utcnow().isoformat()
         }
+    except Exception as e:
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "results": results,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    finally:
+        db.close()
+
+
+@app.get("/api/debug/fix-all", tags=["Debug"])
+async def fix_all_issues():
+    """
+    COMPREHENSIVE FIX: Runs all fixes in order.
+    1. Fix payments schema (add missing columns)
+    2. Fix property ownership (link to owner)
+    3. Create missing units
+
+    Run this endpoint to fix all dashboard issues at once.
+    """
+    from app.database import SessionLocal
+    from app.models.user import User, UserRole
+    from app.models.property import Property, Unit
+    from sqlalchemy import text
+    import uuid
+
+    results = {
+        "schema_fix": [],
+        "property_fix": [],
+        "units_fix": [],
+        "success": True
+    }
+
+    db = SessionLocal()
+    try:
+        # ===== STEP 1: Fix Payments Schema =====
+        try:
+            # Check if we're on PostgreSQL
+            pg_result = db.execute(text("SELECT version()"))
+            pg_version = pg_result.fetchone()
+            if pg_version and 'PostgreSQL' in str(pg_version[0]):
+                # Get existing columns
+                existing = db.execute(text("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'payments'
+                """))
+                existing_columns = [row[0] for row in existing]
+
+                # Create enum if not exists
+                try:
+                    db.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE paymenttype AS ENUM (
+                                'rent', 'water', 'electricity', 'garbage', 'deposit',
+                                'maintenance', 'penalty', 'subscription', 'one_off'
+                            );
+                        EXCEPTION WHEN duplicate_object THEN null;
+                        END $$;
+                    """))
+                    db.commit()
+                    results["schema_fix"].append("Created paymenttype enum")
+                except Exception as e:
+                    results["schema_fix"].append(f"Enum: {str(e)}")
+                    db.rollback()
+
+                # Add missing columns
+                for col, sql in [
+                    ('payment_type', "ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_type paymenttype"),
+                    ('tenant_id', "ALTER TABLE payments ADD COLUMN IF NOT EXISTS tenant_id UUID"),
+                    ('payment_date', "ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_date TIMESTAMP"),
+                    ('due_date', "ALTER TABLE payments ADD COLUMN IF NOT EXISTS due_date TIMESTAMP")
+                ]:
+                    if col not in existing_columns:
+                        try:
+                            db.execute(text(sql))
+                            db.commit()
+                            results["schema_fix"].append(f"Added {col} column")
+                        except Exception as e:
+                            results["schema_fix"].append(f"{col}: {str(e)}")
+                            db.rollback()
+                    else:
+                        results["schema_fix"].append(f"{col} already exists")
+            else:
+                results["schema_fix"].append("Not PostgreSQL, skipping schema fix")
+        except Exception as e:
+            results["schema_fix"].append(f"Schema fix error: {str(e)}")
+
+        # ===== STEP 2: Fix Property Ownership (raw SQL to avoid UUID type issues) =====
+        try:
+            owner = db.query(User).filter(User.role == UserRole.OWNER).first()
+            if owner:
+                owner_id_str = str(owner.id)
+                # Find orphaned properties via raw SQL
+                orphaned = db.execute(text("""
+                    SELECT p.id, p.name FROM properties p
+                    LEFT JOIN users u ON p.user_id = u.id
+                    WHERE u.id IS NULL OR u.role != 'owner'
+                """)).fetchall()
+
+                if orphaned:
+                    db.execute(
+                        text("""
+                            UPDATE properties SET user_id = CAST(:owner_id AS UUID)
+                            WHERE id IN (
+                                SELECT p.id FROM properties p
+                                LEFT JOIN users u ON p.user_id = u.id
+                                WHERE u.id IS NULL OR u.role != 'owner'
+                            )
+                        """),
+                        {"owner_id": owner_id_str}
+                    )
+                    db.commit()
+                    results["property_fix"].append(f"Linked {len(orphaned)} properties to owner {owner.email}")
+                else:
+                    results["property_fix"].append("All properties correctly linked")
+            else:
+                results["property_fix"].append("No owner account found")
+        except Exception as e:
+            results["property_fix"].append(f"Property fix error: {str(e)}")
+            db.rollback()
+
+        # ===== STEP 3: Create Missing Units =====
+        try:
+            properties = db.query(Property).all()
+            created_count = 0
+            for prop in properties:
+                existing_units = db.query(Unit).filter(Unit.property_id == prop.id).count()
+                if existing_units == 0:
+                    units_to_create = prop.total_units if prop.total_units and prop.total_units > 0 else 10
+                    for i in range(1, units_to_create + 1):
+                        new_unit = Unit(
+                            id=uuid.uuid4(),
+                            property_id=prop.id,
+                            unit_number=f"Unit {i}",
+                            bedrooms=1,
+                            bathrooms=1.0,
+                            monthly_rent=15000.0,
+                            status="vacant"
+                        )
+                        db.add(new_unit)
+                        created_count += 1
+                    prop.total_units = units_to_create
+
+            if created_count > 0:
+                db.commit()
+                results["units_fix"].append(f"Created {created_count} units")
+            else:
+                results["units_fix"].append("All properties have units")
+        except Exception as e:
+            results["units_fix"].append(f"Units fix error: {str(e)}")
+            db.rollback()
+
+        return {
+            "success": True,
+            "message": "All fixes completed",
+            "results": results,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
     except Exception as e:
         import traceback
         return {
