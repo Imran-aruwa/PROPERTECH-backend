@@ -22,6 +22,9 @@ import uuid as uuid_module
 
 router = APIRouter(tags=["agent"])
 
+# Unit statuses that count as "occupied" for calculations
+OCCUPIED_STATUSES = ["occupied", "rented", "mortgaged"]
+
 
 # Pydantic schema for property creation by agent
 class AgentPropertyCreate(BaseModel):
@@ -80,7 +83,7 @@ def get_agent_dashboard(
     # Calculate metrics
     total_units = db.query(Unit).filter(Unit.property_id.in_(property_ids)).count()
     occupied_units = db.query(Unit).filter(
-        and_(Unit.property_id.in_(property_ids), Unit.status == "occupied")
+        and_(Unit.property_id.in_(property_ids), Unit.status.in_(OCCUPIED_STATUSES))
     ).count()
 
     today = datetime.utcnow().date()
@@ -260,7 +263,7 @@ def get_agent_properties(
     for prop in properties:
         units = db.query(Unit).filter(Unit.property_id == prop.id).count()
         occupied = db.query(Unit).filter(
-            and_(Unit.property_id == prop.id, Unit.status == "occupied")
+            and_(Unit.property_id == prop.id, Unit.status.in_(OCCUPIED_STATUSES))
         ).count()
         vacant = units - occupied
 
@@ -501,7 +504,7 @@ def get_agent_rent_tracking(
 
     # Total expected rent
     total_expected = db.query(func.sum(Unit.monthly_rent))\
-        .filter(and_(Unit.property_id.in_(property_ids), Unit.status == "occupied"))\
+        .filter(and_(Unit.property_id.in_(property_ids), Unit.status.in_(OCCUPIED_STATUSES)))\
         .scalar() or 0
 
     # Total collected
@@ -522,7 +525,7 @@ def get_agent_rent_tracking(
     property_breakdown = []
     for prop in properties:
         prop_expected = db.query(func.sum(Unit.monthly_rent))\
-            .filter(and_(Unit.property_id == prop.id, Unit.status == "occupied"))\
+            .filter(and_(Unit.property_id == prop.id, Unit.status.in_(OCCUPIED_STATUSES)))\
             .scalar() or 0
 
         prop_collected = db.query(func.sum(Payment.amount))\

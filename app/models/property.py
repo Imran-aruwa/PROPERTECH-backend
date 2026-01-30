@@ -1,8 +1,19 @@
-from sqlalchemy import Column, String, ForeignKey, DateTime, Integer, Float, Text, Uuid, Boolean
+from sqlalchemy import Column, String, ForeignKey, DateTime, Integer, Float, Text, Uuid, Boolean, Enum as SQLEnum
 from sqlalchemy.orm import relationship
 from datetime import datetime
+from enum import Enum
 import uuid
 from app.db.base import Base
+
+
+class UnitStatus(str, Enum):
+    """Unit occupancy/ownership status"""
+    VACANT = "vacant"           # Available for rent/sale
+    OCCUPIED = "occupied"       # Has a tenant (legacy, same as rented)
+    RENTED = "rented"           # Currently rented out to a tenant
+    BOUGHT = "bought"           # Unit has been sold/purchased
+    MORTGAGED = "mortgaged"     # Unit is under mortgage
+    MAINTENANCE = "maintenance" # Under maintenance, not available
 
 class Property(Base):
     __tablename__ = "properties"

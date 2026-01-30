@@ -14,6 +14,13 @@ from app.schemas.property import (
 router = APIRouter()
 
 
+def is_unit_occupied(status: str) -> bool:
+    """Check if a unit status counts as 'occupied' for calculations"""
+    if not status:
+        return False
+    return status.lower() in ("occupied", "rented", "mortgaged")
+
+
 # ==================== STATIC ROUTES FIRST (before /{property_id}) ====================
 
 @router.get("/units", response_model=List[UnitResponse])
@@ -133,7 +140,7 @@ def delete_unit_by_id(
 
 def property_with_stats(prop: Property) -> dict:
     """Convert property to dict with computed stats"""
-    occupied = sum(1 for u in prop.units if u.status == "occupied") if prop.units else 0
+    occupied = sum(1 for u in prop.units if is_unit_occupied(u.status)) if prop.units else 0
     return {
         "id": prop.id,
         "user_id": prop.user_id,

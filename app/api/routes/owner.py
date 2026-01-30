@@ -21,6 +21,25 @@ from app.models.staff import Staff
 router = APIRouter(tags=["owner"])
 
 
+def is_unit_occupied(status: str) -> bool:
+    """
+    Check if a unit status counts as 'occupied' for revenue/occupancy calculations.
+    - rented: tenant paying rent
+    - occupied: legacy status, same as rented
+    - mortgaged: unit has mortgage but may still be rented (count as occupied)
+    """
+    if not status:
+        return False
+    return status.lower() in ("occupied", "rented", "mortgaged")
+
+
+def is_unit_available(status: str) -> bool:
+    """Check if a unit is available for rent/sale"""
+    if not status:
+        return True
+    return status.lower() in ("vacant", "maintenance")
+
+
 def get_owner_properties_with_fallback(db: Session, owner_id) -> list:
     """
     Get properties for an owner. If properties exist but aren't linked to this
@@ -163,7 +182,7 @@ def get_owner_dashboard(
 
         total_units += len(prop_units)
         for unit in prop_units:
-            if unit.status == "occupied":
+            if is_unit_occupied(unit.status):
                 occupied_units += 1
 
     # FALLBACK: If no units found but property has total_units field, use that
@@ -177,7 +196,7 @@ def get_owner_dashboard(
     if total_units == 0 and len(all_units_in_db) > 0:
         logger.info(f"[DASHBOARD] Using all-units fallback: {len(all_units_in_db)} units")
         total_units = len(all_units_in_db)
-        occupied_units = sum(1 for u in all_units_in_db if u.status == "occupied")
+        occupied_units = sum(1 for u in all_units_in_db if is_unit_occupied(u.status))
 
     occupancy_rate = (occupied_units / total_units * 100) if total_units > 0 else 0
     logger.info(f"[DASHBOARD] Final counts - Units: {total_units}, Occupied: {occupied_units}")
@@ -196,14 +215,14 @@ def get_owner_dashboard(
     expected_rent = 0
     for prop in properties:
         prop_expected = db.query(func.sum(Unit.monthly_rent))\
-            .filter(and_(Unit.property_id == prop.id, Unit.status == "occupied"))\
+            .filter(and_(Unit.property_id == prop.id, Unit.status.in_(["occupied", "rented", "mortgaged"])))\
             .scalar() or 0
         expected_rent += prop_expected
 
     # FALLBACK: If no expected rent but we have occupied units, use all units
     if expected_rent == 0 and occupied_units > 0:
         for unit in all_units_in_db:
-            if unit.status == "occupied" and unit.monthly_rent:
+            if is_unit_occupied(unit.status) and unit.monthly_rent:
                 expected_rent += unit.monthly_rent
     logger.info(f"[DASHBOARD] Expected rent: {expected_rent}")
 
@@ -358,7 +377,7 @@ def get_owner_property_detail(
 
     # Calculate revenue metrics
     expected_rent = db.query(func.sum(Unit.monthly_rent))\
-        .filter(and_(Unit.property_id == property_id, Unit.status == "occupied"))\
+        .filter(and_(Unit.property_id == property_id, Unit.status.in_(["occupied", "rented", "mortgaged"])))\
         .scalar() or 0
 
     # Payment queries with error handling for missing columns
@@ -589,7 +608,7 @@ def get_financial_analytics(
             month_next_start = datetime(month_date.year, month_date.month + 1, 1)
 
         # Calculate expected rent from units
-        expected = sum(u.monthly_rent or 0 for u in all_units if u.status == "occupied")
+        expected = sum(u.monthly_rent or 0 for u in all_units if is_unit_occupied(u.status))
 
         collected = db.query(func.sum(Payment.amount))\
             .filter(
@@ -640,7 +659,7 @@ def get_owner_properties(
         # Direct query for units linked to this property
         prop_units = db.query(Unit).filter(Unit.property_id == prop.id).all()
         units = len(prop_units)
-        occupied = sum(1 for u in prop_units if u.status == "occupied")
+        occupied = sum(1 for u in prop_units if is_unit_occupied(u.status))
 
         logger.info(f"[PROPERTIES] Property '{prop.name}' - Direct units: {units}, prop.total_units: {prop.total_units}")
 
@@ -653,7 +672,7 @@ def get_owner_properties(
         if units == 0 and len(properties) == 1 and len(all_units_in_db) > 0:
             logger.info(f"[PROPERTIES] Single property fallback - assigning all {len(all_units_in_db)} units")
             units = len(all_units_in_db)
-            occupied = sum(1 for u in all_units_in_db if u.status == "occupied")
+            occupied = sum(1 for u in all_units_in_db if is_unit_occupied(u.status))
 
         property_list.append({
             "id": str(prop.id),
@@ -810,14 +829,14 @@ def generate_monthly_report(
     expected_rent = 0
     for prop in properties:
         prop_expected = db.query(func.sum(Unit.monthly_rent))\
-            .filter(and_(Unit.property_id == prop.id, Unit.status == "occupied"))\
+            .filter(and_(Unit.property_id == prop.id, Unit.status.in_(["occupied", "rented", "mortgaged"])))\
             .scalar() or 0
         expected_rent += prop_expected
 
     # Fallback: get from all units
     if expected_rent == 0:
         expected_rent = db.query(func.sum(Unit.monthly_rent))\
-            .filter(Unit.status == "occupied")\
+            .filter(Unit.status.in_(["occupied", "rented", "mortgaged"]))\
             .scalar() or 0
 
     collected_rent = db.query(func.sum(Payment.amount))\
@@ -863,14 +882,14 @@ def get_owner_rent_summary(
     expected_rent = 0
     for prop in properties:
         prop_expected = db.query(func.sum(Unit.monthly_rent))\
-            .filter(and_(Unit.property_id == prop.id, Unit.status == "occupied"))\
+            .filter(and_(Unit.property_id == prop.id, Unit.status.in_(["occupied", "rented", "mortgaged"])))\
             .scalar() or 0
         expected_rent += prop_expected
 
     # Fallback: get from all units
     if expected_rent == 0:
         expected_rent = db.query(func.sum(Unit.monthly_rent))\
-            .filter(Unit.status == "occupied")\
+            .filter(Unit.status.in_(["occupied", "rented", "mortgaged"]))\
             .scalar() or 0
 
     collected_rent = db.query(func.sum(Payment.amount))\

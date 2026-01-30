@@ -1,7 +1,19 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from uuid import UUID
 from datetime import datetime
 from typing import Optional, List
+from enum import Enum
+
+
+class UnitStatusEnum(str, Enum):
+    """Valid unit status values for API validation"""
+    VACANT = "vacant"
+    OCCUPIED = "occupied"
+    RENTED = "rented"
+    BOUGHT = "bought"
+    MORTGAGED = "mortgaged"
+    MAINTENANCE = "maintenance"
+
 
 class UnitBase(BaseModel):
     unit_number: str
@@ -11,6 +23,15 @@ class UnitBase(BaseModel):
     square_feet: Optional[int] = None
     monthly_rent: Optional[float] = None
     status: str = "vacant"
+
+    @field_validator('status')
+    @classmethod
+    def validate_status(cls, v):
+        valid_statuses = [s.value for s in UnitStatusEnum]
+        if v and v.lower() not in valid_statuses:
+            # Allow the value but normalize to lowercase
+            pass
+        return v.lower() if v else "vacant"
     # Master bedroom
     has_master_bedroom: Optional[bool] = False
     # Servant Quarters

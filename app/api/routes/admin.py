@@ -20,6 +20,17 @@ from app.models.maintenance import MaintenanceRequest
 router = APIRouter(tags=["admin"])
 
 
+# Unit statuses that count as "occupied" for calculations
+OCCUPIED_STATUSES = ["occupied", "rented", "mortgaged"]
+
+
+def is_unit_occupied(status: str) -> bool:
+    """Check if a unit status counts as 'occupied' for calculations"""
+    if not status:
+        return False
+    return status.lower() in OCCUPIED_STATUSES
+
+
 def verify_admin(user: User):
     """Verify user has admin access"""
     if user.role not in [UserRole.ADMIN, UserRole.OWNER]:
@@ -235,7 +246,7 @@ def get_all_properties(
     property_list = []
     for prop in properties:
         units = db.query(Unit).filter(Unit.property_id == prop.id).all()
-        occupied = len([u for u in units if u.status == "occupied"])
+        occupied = len([u for u in units if is_unit_occupied(u.status)])
         total_units = len(units)
 
         # Get owner info - Property uses user_id, not owner_id
@@ -346,7 +357,7 @@ def get_report_data(
 
     elif report_id == "occupancy-report":
         total_units = db.query(Unit).count()
-        occupied_units = db.query(Unit).filter(Unit.status == "occupied").count()
+        occupied_units = db.query(Unit).filter(Unit.status.in_(OCCUPIED_STATUSES)).count()
         vacant_units = total_units - occupied_units
 
         return {
@@ -406,7 +417,7 @@ def get_report_data(
 
     elif report_id == "payment-collection":
         expected_rent = db.query(func.sum(Unit.monthly_rent))\
-            .filter(Unit.status == "occupied")\
+            .filter(Unit.status.in_(OCCUPIED_STATUSES))\
             .scalar() or 0
 
         collected_payments = db.query(func.sum(Payment.amount))\
@@ -511,7 +522,7 @@ def generate_admin_report(
         total_users = db.query(User).count()
         total_properties = db.query(Property).count()
         total_units = db.query(Unit).count()
-        occupied_units = db.query(Unit).filter(Unit.status == "occupied").count()
+        occupied_units = db.query(Unit).filter(Unit.status.in_(OCCUPIED_STATUSES)).count()
         total_tenants = db.query(Tenant).filter(Tenant.status == "active").count()
 
         total_revenue = db.query(func.sum(Payment.amount))\
@@ -635,7 +646,7 @@ def get_system_diagnostic(
     # 5. Unit status distribution
     try:
         vacant = db.query(Unit).filter(Unit.status == "vacant").count()
-        occupied = db.query(Unit).filter(Unit.status == "occupied").count()
+        occupied = db.query(Unit).filter(Unit.status.in_(OCCUPIED_STATUSES)).count()
         maintenance = db.query(Unit).filter(Unit.status == "maintenance").count()
         diagnostic["data_summary"]["units_vacant"] = vacant
         diagnostic["data_summary"]["units_occupied"] = occupied

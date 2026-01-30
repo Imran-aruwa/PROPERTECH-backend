@@ -21,6 +21,9 @@ from app.schemas.meter import MeterReadingCreate, MeterReadingResponse
 
 router = APIRouter(tags=["caretaker"])
 
+# Unit statuses that count as "occupied" for calculations
+OCCUPIED_STATUSES = ["occupied", "rented", "mortgaged"]
+
 
 # ==================== CARETAKER DASHBOARD ====================
 
@@ -47,7 +50,7 @@ def get_caretaker_dashboard(
     # Calculate metrics
     total_units = db.query(Unit).filter(Unit.property_id.in_(property_ids)).count()
     occupied_units = db.query(Unit).filter(
-        and_(Unit.property_id.in_(property_ids), Unit.status == "occupied")
+        and_(Unit.property_id.in_(property_ids), Unit.status.in_(OCCUPIED_STATUSES))
     ).count()
     occupancy_rate = (occupied_units / total_units * 100) if total_units > 0 else 0
 
@@ -57,7 +60,7 @@ def get_caretaker_dashboard(
     current_month_end = datetime(today.year, today.month + 1 if today.month < 12 else 1, 1).date() - timedelta(days=1)
 
     expected_rent = db.query(func.sum(Unit.monthly_rent))\
-        .filter(and_(Unit.property_id.in_(property_ids), Unit.status == "occupied"))\
+        .filter(and_(Unit.property_id.in_(property_ids), Unit.status.in_(OCCUPIED_STATUSES)))\
         .scalar() or 0
     
     collected_rent = db.query(func.sum(Payment.amount))\
