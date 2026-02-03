@@ -1109,3 +1109,372 @@ async def fix_all_issues():
         }
     finally:
         db.close()
+
+
+@app.get("/api/debug/populate-null-values", tags=["Debug"])
+async def populate_null_values():
+    """
+    POPULATE NULL VALUES: Fills NULL database fields with sensible defaults.
+
+    This endpoint populates NULL values across all tables with reasonable defaults:
+    - Payments: payment_type, payment_date, due_date, description
+    - Units: bedrooms, bathrooms, square_feet, monthly_rent, status
+    - Properties: country, city, property_type
+    - Tenants: deposit_amount, move_in_date, balance_due, lease_end
+    - Users: preferred_currency, status, country
+    - Subscriptions: next_billing_date, currency
+    - Invoices: due_date
+    - Attendance: status, hours_worked
+    - Equipment, Leads, Viewings, Maintenance: status fields
+
+    NO AUTHENTICATION REQUIRED - use for data population.
+    """
+    from app.database import SessionLocal
+    from sqlalchemy import text
+
+    db = SessionLocal()
+    results = {
+        "payments": [],
+        "units": [],
+        "properties": [],
+        "tenants": [],
+        "users": [],
+        "subscriptions": [],
+        "invoices": [],
+        "other": []
+    }
+
+    try:
+        # Check if we're on PostgreSQL
+        try:
+            pg_result = db.execute(text("SELECT version()"))
+            pg_version = pg_result.fetchone()
+            is_postgres = pg_version and 'PostgreSQL' in str(pg_version[0])
+        except:
+            is_postgres = False
+
+        # =====================================================
+        # PAYMENTS TABLE
+        # =====================================================
+        try:
+            # Set payment_type to 'subscription' for NULL values
+            result = db.execute(text("""
+                UPDATE payments
+                SET payment_type = 'subscription'
+                WHERE payment_type IS NULL
+            """))
+            db.commit()
+            results["payments"].append(f"payment_type: {result.rowcount} rows updated")
+        except Exception as e:
+            results["payments"].append(f"payment_type error: {str(e)}")
+            db.rollback()
+
+        try:
+            # Set payment_date to paid_at or created_at
+            result = db.execute(text("""
+                UPDATE payments
+                SET payment_date = COALESCE(paid_at, created_at)
+                WHERE payment_date IS NULL
+            """))
+            db.commit()
+            results["payments"].append(f"payment_date: {result.rowcount} rows updated")
+        except Exception as e:
+            results["payments"].append(f"payment_date error: {str(e)}")
+            db.rollback()
+
+        try:
+            # Set due_date
+            if is_postgres:
+                result = db.execute(text("""
+                    UPDATE payments
+                    SET due_date = created_at + INTERVAL '30 days'
+                    WHERE due_date IS NULL
+                """))
+            else:
+                result = db.execute(text("""
+                    UPDATE payments
+                    SET due_date = datetime(created_at, '+30 days')
+                    WHERE due_date IS NULL
+                """))
+            db.commit()
+            results["payments"].append(f"due_date: {result.rowcount} rows updated")
+        except Exception as e:
+            results["payments"].append(f"due_date error: {str(e)}")
+            db.rollback()
+
+        try:
+            result = db.execute(text("""
+                UPDATE payments
+                SET description = 'Subscription payment'
+                WHERE description IS NULL
+            """))
+            db.commit()
+            results["payments"].append(f"description: {result.rowcount} rows updated")
+        except Exception as e:
+            results["payments"].append(f"description error: {str(e)}")
+            db.rollback()
+
+        # =====================================================
+        # UNITS TABLE
+        # =====================================================
+        try:
+            result = db.execute(text("UPDATE units SET bedrooms = 1 WHERE bedrooms IS NULL"))
+            db.commit()
+            results["units"].append(f"bedrooms: {result.rowcount} rows updated")
+        except Exception as e:
+            results["units"].append(f"bedrooms error: {str(e)}")
+            db.rollback()
+
+        try:
+            result = db.execute(text("UPDATE units SET bathrooms = 1 WHERE bathrooms IS NULL"))
+            db.commit()
+            results["units"].append(f"bathrooms: {result.rowcount} rows updated")
+        except Exception as e:
+            results["units"].append(f"bathrooms error: {str(e)}")
+            db.rollback()
+
+        try:
+            result = db.execute(text("UPDATE units SET square_feet = 500 WHERE square_feet IS NULL"))
+            db.commit()
+            results["units"].append(f"square_feet: {result.rowcount} rows updated")
+        except Exception as e:
+            results["units"].append(f"square_feet error: {str(e)}")
+            db.rollback()
+
+        try:
+            result = db.execute(text("UPDATE units SET monthly_rent = 15000 WHERE monthly_rent IS NULL"))
+            db.commit()
+            results["units"].append(f"monthly_rent: {result.rowcount} rows updated")
+        except Exception as e:
+            results["units"].append(f"monthly_rent error: {str(e)}")
+            db.rollback()
+
+        try:
+            result = db.execute(text("UPDATE units SET status = 'vacant' WHERE status IS NULL"))
+            db.commit()
+            results["units"].append(f"status: {result.rowcount} rows updated")
+        except Exception as e:
+            results["units"].append(f"status error: {str(e)}")
+            db.rollback()
+
+        try:
+            result = db.execute(text("UPDATE units SET toilets = 1 WHERE toilets IS NULL OR toilets = 0"))
+            db.commit()
+            results["units"].append(f"toilets: {result.rowcount} rows updated")
+        except Exception as e:
+            results["units"].append(f"toilets error: {str(e)}")
+            db.rollback()
+
+        # =====================================================
+        # PROPERTIES TABLE
+        # =====================================================
+        try:
+            result = db.execute(text("UPDATE properties SET country = 'Kenya' WHERE country IS NULL"))
+            db.commit()
+            results["properties"].append(f"country: {result.rowcount} rows updated")
+        except Exception as e:
+            results["properties"].append(f"country error: {str(e)}")
+            db.rollback()
+
+        try:
+            result = db.execute(text("UPDATE properties SET city = 'Nairobi' WHERE city IS NULL"))
+            db.commit()
+            results["properties"].append(f"city: {result.rowcount} rows updated")
+        except Exception as e:
+            results["properties"].append(f"city error: {str(e)}")
+            db.rollback()
+
+        try:
+            result = db.execute(text("UPDATE properties SET property_type = 'residential' WHERE property_type IS NULL"))
+            db.commit()
+            results["properties"].append(f"property_type: {result.rowcount} rows updated")
+        except Exception as e:
+            results["properties"].append(f"property_type error: {str(e)}")
+            db.rollback()
+
+        # =====================================================
+        # TENANTS TABLE
+        # =====================================================
+        try:
+            result = db.execute(text("""
+                UPDATE tenants
+                SET deposit_amount = rent_amount
+                WHERE (deposit_amount IS NULL OR deposit_amount = 0)
+                AND rent_amount IS NOT NULL
+            """))
+            db.commit()
+            results["tenants"].append(f"deposit_amount: {result.rowcount} rows updated")
+        except Exception as e:
+            results["tenants"].append(f"deposit_amount error: {str(e)}")
+            db.rollback()
+
+        try:
+            result = db.execute(text("""
+                UPDATE tenants
+                SET move_in_date = lease_start
+                WHERE move_in_date IS NULL AND lease_start IS NOT NULL
+            """))
+            db.commit()
+            results["tenants"].append(f"move_in_date: {result.rowcount} rows updated")
+        except Exception as e:
+            results["tenants"].append(f"move_in_date error: {str(e)}")
+            db.rollback()
+
+        try:
+            result = db.execute(text("UPDATE tenants SET balance_due = 0 WHERE balance_due IS NULL"))
+            db.commit()
+            results["tenants"].append(f"balance_due: {result.rowcount} rows updated")
+        except Exception as e:
+            results["tenants"].append(f"balance_due error: {str(e)}")
+            db.rollback()
+
+        try:
+            result = db.execute(text("UPDATE tenants SET lease_duration_months = 12 WHERE lease_duration_months IS NULL"))
+            db.commit()
+            results["tenants"].append(f"lease_duration_months: {result.rowcount} rows updated")
+        except Exception as e:
+            results["tenants"].append(f"lease_duration_months error: {str(e)}")
+            db.rollback()
+
+        try:
+            if is_postgres:
+                result = db.execute(text("""
+                    UPDATE tenants
+                    SET lease_end = lease_start + (lease_duration_months || ' months')::INTERVAL
+                    WHERE lease_end IS NULL
+                    AND lease_start IS NOT NULL
+                    AND lease_duration_months IS NOT NULL
+                """))
+            else:
+                result = db.execute(text("""
+                    UPDATE tenants
+                    SET lease_end = datetime(lease_start, '+' || lease_duration_months || ' months')
+                    WHERE lease_end IS NULL
+                    AND lease_start IS NOT NULL
+                    AND lease_duration_months IS NOT NULL
+                """))
+            db.commit()
+            results["tenants"].append(f"lease_end: {result.rowcount} rows updated")
+        except Exception as e:
+            results["tenants"].append(f"lease_end error: {str(e)}")
+            db.rollback()
+
+        # =====================================================
+        # USERS TABLE
+        # =====================================================
+        try:
+            result = db.execute(text("UPDATE users SET preferred_currency = 'KES' WHERE preferred_currency IS NULL"))
+            db.commit()
+            results["users"].append(f"preferred_currency: {result.rowcount} rows updated")
+        except Exception as e:
+            results["users"].append(f"preferred_currency error: {str(e)}")
+            db.rollback()
+
+        try:
+            result = db.execute(text("UPDATE users SET status = 'active' WHERE status IS NULL"))
+            db.commit()
+            results["users"].append(f"status: {result.rowcount} rows updated")
+        except Exception as e:
+            results["users"].append(f"status error: {str(e)}")
+            db.rollback()
+
+        try:
+            result = db.execute(text("UPDATE users SET country = 'KE' WHERE country IS NULL"))
+            db.commit()
+            results["users"].append(f"country: {result.rowcount} rows updated")
+        except Exception as e:
+            results["users"].append(f"country error: {str(e)}")
+            db.rollback()
+
+        # =====================================================
+        # SUBSCRIPTIONS TABLE
+        # =====================================================
+        try:
+            if is_postgres:
+                result = db.execute(text("""
+                    UPDATE subscriptions
+                    SET next_billing_date = start_date + INTERVAL '30 days'
+                    WHERE next_billing_date IS NULL AND start_date IS NOT NULL
+                """))
+            else:
+                result = db.execute(text("""
+                    UPDATE subscriptions
+                    SET next_billing_date = datetime(start_date, '+30 days')
+                    WHERE next_billing_date IS NULL AND start_date IS NOT NULL
+                """))
+            db.commit()
+            results["subscriptions"].append(f"next_billing_date: {result.rowcount} rows updated")
+        except Exception as e:
+            results["subscriptions"].append(f"next_billing_date error: {str(e)}")
+            db.rollback()
+
+        # =====================================================
+        # INVOICES TABLE
+        # =====================================================
+        try:
+            if is_postgres:
+                result = db.execute(text("""
+                    UPDATE invoices
+                    SET due_date = issue_date + INTERVAL '7 days'
+                    WHERE due_date IS NULL AND issue_date IS NOT NULL
+                """))
+            else:
+                result = db.execute(text("""
+                    UPDATE invoices
+                    SET due_date = datetime(issue_date, '+7 days')
+                    WHERE due_date IS NULL AND issue_date IS NOT NULL
+                """))
+            db.commit()
+            results["invoices"].append(f"due_date: {result.rowcount} rows updated")
+        except Exception as e:
+            results["invoices"].append(f"due_date error: {str(e)}")
+            db.rollback()
+
+        # =====================================================
+        # OTHER TABLES (status fields)
+        # =====================================================
+        other_updates = [
+            ("attendance", "status", "present"),
+            ("equipment", "status", "working"),
+            ("leads", "status", "new"),
+            ("viewings", "status", "scheduled"),
+            ("maintenance_requests", "status", "pending"),
+            ("leave_requests", "status", "pending"),
+        ]
+
+        for table, column, default in other_updates:
+            try:
+                result = db.execute(text(f"UPDATE {table} SET {column} = '{default}' WHERE {column} IS NULL"))
+                db.commit()
+                results["other"].append(f"{table}.{column}: {result.rowcount} rows updated")
+            except Exception as e:
+                results["other"].append(f"{table}.{column} error: {str(e)}")
+                db.rollback()
+
+        # Count total updates
+        total_updates = sum(
+            int(r.split(": ")[1].split(" ")[0])
+            for category in results.values()
+            for r in category
+            if "rows updated" in r
+        )
+
+        return {
+            "success": True,
+            "message": f"Populated NULL values - {total_updates} total rows updated",
+            "is_postgres": is_postgres,
+            "results": results,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    except Exception as e:
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "results": results,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    finally:
+        db.close()
