@@ -16,6 +16,8 @@ from app.models.user import User, UserRole
 from app.models.staff import Staff
 from app.models.task import Task, TaskStatus
 from app.models.attendance import Attendance
+from app.models.equipment import Equipment
+from app.models.property import Property
 
 router = APIRouter(tags=["staff-gardener"])
 
@@ -82,17 +84,30 @@ def get_gardener_dashboard(
         for t in tasks_today
     ]
 
-    # Equipment list (mock data - could be expanded with equipment model)
+    # Get staff record to find their property
+    staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+
+    # Get equipment from database for the staff's property
+    equipment_query = db.query(Equipment)
+    if staff and staff.property_id:
+        equipment_query = equipment_query.filter(Equipment.property_id == staff.property_id)
+
+    equipment_list = equipment_query.all()
+
+    # Format equipment data
     equipment = [
-        {"id": "1", "name": "Lawn Mower", "status": "Available"},
-        {"id": "2", "name": "Hedge Trimmer", "status": "In Use"},
-        {"id": "3", "name": "Leaf Blower", "status": "Available"},
-        {"id": "4", "name": "Rake Set", "status": "Available"},
-        {"id": "5", "name": "Water Hose", "status": "Maintenance"}
+        {
+            "id": str(e.id),
+            "name": e.name,
+            "status": e.status.title() if e.status else "Available",
+            "type": e.type,
+            "description": e.description
+        }
+        for e in equipment_list
     ]
 
-    # Count available equipment
-    equipment_available = len([e for e in equipment if e["status"] == "Available"])
+    # Count available equipment (status 'working' or 'available')
+    equipment_available = len([e for e in equipment_list if e.status and e.status.lower() in ["working", "available"]])
 
     return {
         "success": True,
@@ -195,25 +210,38 @@ def get_gardener_equipment(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get available equipment"""
+    """Get available equipment from database"""
     if current_user.role not in [UserRole.HEAD_GARDENER, UserRole.GARDENER]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    # Equipment list (could be expanded with a proper Equipment model)
+    # Get staff record to find their property
+    staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
+
+    # Get equipment from database for the staff's property
+    equipment_query = db.query(Equipment)
+    if staff and staff.property_id:
+        equipment_query = equipment_query.filter(Equipment.property_id == staff.property_id)
+
+    equipment_list = equipment_query.all()
+
+    # Format equipment data
     equipment = [
-        {"id": "1", "name": "Lawn Mower", "status": "Available"},
-        {"id": "2", "name": "Hedge Trimmer", "status": "In Use"},
-        {"id": "3", "name": "Leaf Blower", "status": "Available"},
-        {"id": "4", "name": "Rake Set", "status": "Available"},
-        {"id": "5", "name": "Water Hose", "status": "Maintenance"},
-        {"id": "6", "name": "Pruning Shears", "status": "Available"},
-        {"id": "7", "name": "Wheelbarrow", "status": "Available"},
-        {"id": "8", "name": "Garden Fork", "status": "In Use"}
+        {
+            "id": str(e.id),
+            "name": e.name,
+            "status": e.status.title() if e.status else "Available",
+            "type": e.type,
+            "description": e.description,
+            "last_maintenance": e.last_maintenance,
+            "notes": e.notes
+        }
+        for e in equipment_list
     ]
 
     return {
         "success": True,
-        "equipment": equipment
+        "equipment": equipment,
+        "total": len(equipment)
     }
 
 
@@ -224,41 +252,43 @@ def get_gardener_assignments(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get gardener assignments (areas/zones assigned)"""
+    """Get gardener assignments based on staff's property and completed tasks"""
     if current_user.role not in [UserRole.HEAD_GARDENER, UserRole.GARDENER]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     # Get staff record
     staff = db.query(Staff).filter(Staff.user_id == current_user.id).first()
 
-    # Mock assignments (could be stored in a separate table)
-    assignments = [
-        {
-            "id": "1",
-            "zone": "Front Garden",
-            "area": "Main Entrance",
-            "frequency": "Daily",
-            "last_completed": datetime.utcnow().date().isoformat()
-        },
-        {
-            "id": "2",
-            "zone": "Back Garden",
-            "area": "Pool Area",
-            "frequency": "Twice Weekly",
-            "last_completed": (datetime.utcnow().date() - timedelta(days=2)).isoformat()
-        },
-        {
-            "id": "3",
-            "zone": "Side Garden",
-            "area": "Parking Area",
-            "frequency": "Weekly",
-            "last_completed": (datetime.utcnow().date() - timedelta(days=5)).isoformat()
-        }
-    ]
+    assignments = []
+
+    if staff and staff.property_id:
+        # Get the property details
+        property_obj = db.query(Property).filter(Property.id == staff.property_id).first()
+
+        if property_obj:
+            # Get completed gardening tasks to determine last completed dates per area
+            completed_tasks = db.query(Task).filter(
+                and_(
+                    Task.property_id == staff.property_id,
+                    Task.status == TaskStatus.COMPLETED,
+                    Task.assigned_to == current_user.id
+                )
+            ).order_by(desc(Task.completed_at)).limit(50).all()
+
+            # Create assignment based on property
+            assignments.append({
+                "id": str(staff.property_id),
+                "zone": property_obj.name,
+                "area": property_obj.address or "Main Area",
+                "frequency": "As scheduled",
+                "last_completed": completed_tasks[0].completed_at.date().isoformat() if completed_tasks and completed_tasks[0].completed_at else None,
+                "total_tasks_completed": len(completed_tasks)
+            })
 
     return {
         "success": True,
-        "assignments": assignments
+        "assignments": assignments,
+        "message": "Assignments are based on your property assignment and task completion history" if assignments else "No property assignment found. Contact your supervisor."
     }
 
 
@@ -314,15 +344,30 @@ def update_gardener_equipment(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Update equipment status"""
+    """Update equipment status in database"""
     if current_user.role not in [UserRole.HEAD_GARDENER, UserRole.GARDENER]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    # In a real implementation, this would update an Equipment model
-    # For now, return success with the updated status
+    # Find the equipment in database
+    equipment = db.query(Equipment).filter(Equipment.id == equipment_id).first()
+
+    if not equipment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Equipment not found")
+
+    # Update fields if provided
+    if equipment_data.status is not None:
+        equipment.status = equipment_data.status.lower()
+    if equipment_data.notes is not None:
+        equipment.notes = equipment_data.notes
+
+    db.commit()
+    db.refresh(equipment)
+
     return {
         "success": True,
         "message": "Equipment status updated successfully",
-        "id": equipment_id,
-        "status": equipment_data.status or "Available"
+        "id": str(equipment.id),
+        "name": equipment.name,
+        "status": equipment.status,
+        "notes": equipment.notes
     }
