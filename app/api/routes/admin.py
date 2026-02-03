@@ -571,8 +571,6 @@ def get_system_diagnostic(
         "success": True,
         "timestamp": datetime.utcnow().isoformat(),
         "current_user": {
-            "id": str(current_user.id),
-            "email": current_user.email,
             "role": current_user.role.value if current_user.role else None
         },
         "database_health": {},
@@ -611,15 +609,13 @@ def get_system_diagnostic(
             linkage = {
                 "property_id": str(prop.id),
                 "property_name": prop.name,
-                "user_id": str(prop.user_id) if prop.user_id else None,
                 "owner_found": owner is not None,
-                "owner_email": owner.email if owner else None,
                 "owner_role": owner.role.value if owner and owner.role else None,
                 "unit_count": unit_count
             }
 
             if not owner:
-                diagnostic["warnings"].append(f"ORPHAN PROPERTY: {prop.name} has no valid owner (user_id: {prop.user_id})")
+                diagnostic["warnings"].append(f"ORPHAN PROPERTY: {prop.name} has no valid owner")
             elif owner.role != UserRole.OWNER:
                 diagnostic["warnings"].append(f"ROLE MISMATCH: Property '{prop.name}' owner has role '{owner.role.value}' instead of 'owner'")
 
@@ -631,14 +627,11 @@ def get_system_diagnostic(
     try:
         user_properties = db.query(Property).filter(Property.user_id == current_user.id).all()
         diagnostic["current_user"]["property_count"] = len(user_properties)
-        diagnostic["current_user"]["properties"] = [
-            {"id": str(p.id), "name": p.name} for p in user_properties
-        ]
 
         if len(user_properties) == 0 and current_user.role == UserRole.OWNER:
             diagnostic["warnings"].append(
-                f"DASHBOARD ISSUE: Current user ({current_user.email}) is OWNER but has 0 properties linked. "
-                f"This will cause 'total_properties: 0' on dashboard."
+                "DASHBOARD ISSUE: Current user is OWNER but has 0 properties linked. "
+                "This will cause 'total_properties: 0' on dashboard."
             )
     except Exception as e:
         diagnostic["warnings"].append(f"User property check error: {str(e)}")

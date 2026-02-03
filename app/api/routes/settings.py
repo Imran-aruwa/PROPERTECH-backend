@@ -13,7 +13,7 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import User, UserPreference
 from app.models.payment import Subscription, SubscriptionStatus
-from app.core.security import verify_password, get_password_hash
+from app.core.security import verify_password, get_password_hash, validate_password_strength
 
 router = APIRouter(tags=["settings"])
 
@@ -169,9 +169,8 @@ def change_password(
     if not verify_password(password_data.current_password, current_user.hashed_password):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
 
-    # Validate new password
-    if len(password_data.new_password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    # Validate new password strength
+    validate_password_strength(password_data.new_password)
 
     # Update password
     current_user.hashed_password = get_password_hash(password_data.new_password)

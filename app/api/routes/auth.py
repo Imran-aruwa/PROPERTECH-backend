@@ -12,7 +12,8 @@ from app.core.security import (
     verify_password,
     get_password_hash,
     create_access_token,
-    get_current_user
+    get_current_user,
+    validate_password_strength,
 )
 from app.core.config import settings
 
@@ -34,6 +35,9 @@ def signup(user_in: UserCreate, db: Session = Depends(get_db)):
                 status_code=400,
                 detail="Email already registered"
             )
+
+        # Validate password strength
+        validate_password_strength(user_in.password)
 
         # Get role - convert to lowercase enum value
         role_str = user_in.get_role()
@@ -71,7 +75,7 @@ def signup(user_in: UserCreate, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create account: {str(e)}"
+            detail="Failed to create account"
         )
 
 

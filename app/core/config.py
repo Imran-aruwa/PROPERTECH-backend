@@ -3,8 +3,10 @@ Propertechsoftware Application Configuration
 Loads settings from .env file using Pydantic v2 with BaseSettings
 """
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
 from typing import Optional, List
 from functools import lru_cache
+import warnings
 
 
 class Settings(BaseSettings):
@@ -22,8 +24,28 @@ class Settings(BaseSettings):
     # ==================== Security & Authentication ====================
     SECRET_KEY: str = "your-super-secret-key-change-this-in-production"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080  # 7 days
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 hours
     
+    @field_validator("SECRET_KEY")
+    @classmethod
+    def validate_secret_key(cls, v):
+        if v == "your-super-secret-key-change-this-in-production":
+            warnings.warn(
+                "SECRET_KEY is using the default placeholder! Set a secure SECRET_KEY in .env",
+                stacklevel=2,
+            )
+        return v
+
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def validate_database_url(cls, v):
+        if "password@localhost" in v:
+            warnings.warn(
+                "DATABASE_URL is using the default placeholder! Set a real DATABASE_URL in .env",
+                stacklevel=2,
+            )
+        return v
+
     # ==================== CORS & Frontend ====================
     FRONTEND_URL: str = "https://propertechsoftware.com"
     BACKEND_API_URL: str = "https://api.propertechsoftware.com"

@@ -25,6 +25,36 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 # ============================================================================
+# PASSWORD VALIDATION
+# ============================================================================
+
+def validate_password_strength(password: str) -> None:
+    """Validate password meets minimum strength requirements.
+    Raises HTTPException if password is too weak."""
+    import re
+    if len(password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 8 characters",
+        )
+    if not re.search(r"[A-Z]", password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must contain at least one uppercase letter",
+        )
+    if not re.search(r"[a-z]", password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must contain at least one lowercase letter",
+        )
+    if not re.search(r"\d", password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must contain at least one number",
+        )
+
+
+# ============================================================================
 # PASSWORD HASHING FUNCTIONS
 # ============================================================================
 
@@ -96,114 +126,24 @@ def decode_access_token(token: str) -> Optional[dict]:
 # USER VERIFICATION DEPENDENCIES
 # ============================================================================
 
-def extract_token(credentials) -> str:
-    """Extract token from credentials"""
-    if hasattr(credentials, 'credentials'):
-        return credentials.credentials
-    return str(credentials)
-
-
-async def get_current_user(
+def get_current_user(
     request: Request,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """
-    Get current user from JWT token
-    
-    Note: This function needs to import User model locally to avoid circular imports
-    
-    Args:
-        request: HTTP request
-        db: Database session
-        
-    Returns:
-        User object from database
-        
-    Raises:
-        HTTPException: If token is invalid or user not found
-    """
-    # Import here to avoid circular import
-    from app.models.user import User
-    
-    try:
-        # Get token from Authorization header
-        auth_header = request.headers.get("Authorization")
-        
-        if not auth_header or not auth_header.startswith("Bearer "):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Missing or invalid authorization header"
-            )
-        
-        token = auth_header.split(" ")[1]
-        
-        # Decode token
-        payload = decode_access_token(token)
-        
-        if not payload:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired token"
-            )
-        
-        # Get user from database
-        user_id = payload.get("sub")
-        if not user_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token payload"
-            )
+    """Get current authenticated user from JWT token.
+    Thin wrapper that delegates to the canonical implementation in app.dependencies."""
+    from app.dependencies import get_current_user as _get_current_user
+    from fastapi.security import HTTPAuthorizationCredentials
 
-        # Convert string UUID to UUID object for database query
-        import uuid
-        try:
-            user_uuid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid user ID format"
-            )
-
-        user = db.query(User).filter(User.id == user_uuid).first()
-        
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found"
-            )
-        
-        return user
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Authentication error: {e}")
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication failed"
+            detail="Missing or invalid authorization header",
         )
-
-
-async def get_current_user_optional(
-    request: Request,
-    db: Session = Depends(get_db)
-):
-    """
-    Get current user if authenticated, otherwise return None
-    
-    Useful for endpoints that work with or without auth
-    
-    Args:
-        request: HTTP request
-        db: Database session
-        
-    Returns:
-        User object or None
-    """
-    try:
-        return await get_current_user(request, db)
-    except HTTPException:
-        return None
+    token = auth_header.split(" ", 1)[1]
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+    return _get_current_user(credentials=credentials, db=db)
 
 
 def verify_admin(user = Depends(get_current_user)):

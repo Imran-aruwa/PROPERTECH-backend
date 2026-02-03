@@ -118,7 +118,9 @@ async def initiate_payment(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        import logging
+        logging.error(f"Payment initialization error: {e}")
+        raise HTTPException(status_code=400, detail="Payment initialization failed")
 
 
 @router.post("/verify")
@@ -168,7 +170,9 @@ async def verify_payment(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        import logging
+        logging.error(f"Payment verification error: {e}")
+        raise HTTPException(status_code=400, detail="Payment verification failed")
 
 
 @router.post("/subscribe")
@@ -254,7 +258,9 @@ async def create_subscription(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        import logging
+        logging.error(f"Subscription initialization error: {e}")
+        raise HTTPException(status_code=400, detail="Subscription initialization failed")
 
 
 @router.get("/history")
@@ -350,7 +356,9 @@ async def cancel_subscription(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        import logging
+        logging.error(f"Subscription cancellation error: {e}")
+        raise HTTPException(status_code=400, detail="Subscription cancellation failed")
 
 
 @router.get("/{payment_id}")
@@ -410,17 +418,23 @@ async def paystack_webhook(
         body = await request.body()
         payload = await request.json()
 
-        # Verify webhook signature (in production)
+        # Verify webhook signature (mandatory)
         signature = request.headers.get("x-paystack-signature", "")
-        if PAYSTACK_SECRET_KEY and signature:
-            expected_signature = hmac.new(
-                PAYSTACK_SECRET_KEY.encode(),
-                body,
-                hashlib.sha512
-            ).hexdigest()
+        if not PAYSTACK_SECRET_KEY:
+            import logging
+            logging.error("Paystack webhook received but PAYSTACK_SECRET_KEY is not configured")
+            raise HTTPException(status_code=500, detail="Webhook not configured")
+        if not signature:
+            raise HTTPException(status_code=400, detail="Missing signature")
 
-            if signature != expected_signature:
-                raise HTTPException(status_code=400, detail="Invalid signature")
+        expected_signature = hmac.new(
+            PAYSTACK_SECRET_KEY.encode(),
+            body,
+            hashlib.sha512
+        ).hexdigest()
+
+        if not hmac.compare_digest(signature, expected_signature):
+            raise HTTPException(status_code=400, detail="Invalid signature")
 
         event = payload.get("event")
         data = payload.get("data", {})
@@ -709,4 +723,6 @@ async def verify_payment_v1(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        import logging
+        logging.error(f"V1 payment verification error: {e}")
+        raise HTTPException(status_code=400, detail="Payment verification failed")
