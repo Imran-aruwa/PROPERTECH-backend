@@ -9,7 +9,7 @@ from typing import List, Optional
 from datetime import datetime, timedelta
 
 from app.database import get_db
-from app.core.deps import get_current_user
+from app.dependencies import get_current_user
 from app.models.user import User, UserRole
 from app.models.property import Property, Unit
 from app.models.tenant import Tenant

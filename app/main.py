@@ -257,6 +257,11 @@ async def startup_event():
     logger.info("="*70)
     logger.info(f"Environment: {'Production' if not settings.DEBUG else 'Development'}")
     logger.info(f"Frontend URL: {settings.FRONTEND_URL}")
+    logger.info(f"[AUTH CONFIG] SECRET_KEY (first 8 chars): {settings.SECRET_KEY[:8]}...")
+    logger.info(f"[AUTH CONFIG] ALGORITHM: {settings.ALGORITHM}")
+    logger.info(f"[AUTH CONFIG] TOKEN_EXPIRE: {settings.ACCESS_TOKEN_EXPIRE_MINUTES} minutes")
+    if settings.SECRET_KEY == "your-super-secret-key-change-this-in-production":
+        logger.warning("[AUTH CONFIG] WARNING: Using default SECRET_KEY! Set SECRET_KEY in environment variables.")
 
     # Test database connection NON-BLOCKING
     logger.info("Testing database connection...")

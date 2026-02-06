@@ -104,10 +104,10 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 def decode_access_token(token: str) -> Optional[dict]:
     """
     Decode and verify JWT token
-    
+
     Args:
         token: JWT token string
-        
+
     Returns:
         Decoded token payload or None if invalid
     """
@@ -117,8 +117,19 @@ def decode_access_token(token: str) -> Optional[dict]:
             settings.SECRET_KEY,
             algorithms=[settings.ALGORITHM]
         )
+        logger.info(f"[AUTH] Token decoded successfully for sub={payload.get('sub')}")
         return payload
-    except JWTError:
+    except jwt.ExpiredSignatureError:
+        logger.warning("[AUTH] Token has expired")
+        return None
+    except jwt.JWTClaimsError as e:
+        logger.warning(f"[AUTH] Token claims error: {e}")
+        return None
+    except JWTError as e:
+        logger.error(f"[AUTH] JWT decode error: {type(e).__name__}: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"[AUTH] Unexpected token decode error: {type(e).__name__}: {e}")
         return None
 
 

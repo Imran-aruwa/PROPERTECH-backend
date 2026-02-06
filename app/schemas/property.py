@@ -17,11 +17,11 @@ class UnitStatusEnum(str, Enum):
 
 class UnitBase(BaseModel):
     unit_number: str
-    bedrooms: Optional[int] = None
-    bathrooms: Optional[float] = None
-    toilets: Optional[int] = 0  # Separate toilet count
-    square_feet: Optional[int] = None
-    monthly_rent: Optional[float] = None
+    bedrooms: Optional[int] = 1
+    bathrooms: Optional[float] = 1.0
+    toilets: Optional[int] = 1
+    square_feet: Optional[int] = 500
+    monthly_rent: Optional[float] = 0
     status: str = "vacant"
 
     @field_validator('status')
@@ -84,8 +84,8 @@ class PropertyCreate(PropertyBase):
     default_bedrooms: Optional[int] = 1
     default_bathrooms: Optional[float] = 1.0
     default_toilets: Optional[int] = 0  # Separate toilets
-    default_rent: Optional[float] = None
-    default_square_feet: Optional[int] = None
+    default_rent: Optional[float] = 15000
+    default_square_feet: Optional[int] = 500
     # Master bedroom
     default_has_master_bedroom: Optional[bool] = False
     # Servant Quarters defaults

@@ -2,6 +2,7 @@
 Authentication Endpoints
 User signup, login, and profile management
 """
+import logging
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -12,10 +13,13 @@ from app.core.security import (
     verify_password,
     get_password_hash,
     create_access_token,
-    get_current_user,
     validate_password_strength,
+    decode_access_token,
 )
+from app.dependencies import get_current_user
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -106,15 +110,26 @@ def login(user_credentials: UserLogin, db: Session = Depends(get_db)):
     user_role_jwt = getattr(user, 'role', None)
     role_for_jwt = user_role_jwt.value if hasattr(user_role_jwt, 'value') else str(user_role_jwt) if user_role_jwt else "owner"
 
+    token_data = {
+        "sub": str(user.id),  # User ID as subject (required for auth)
+        "user_id": str(user.id),  # Explicit user_id field
+        "email": user.email,
+        "role": role_for_jwt
+    }
+
     access_token = create_access_token(
-        data={
-            "sub": str(user.id),  # User ID as subject (required for auth)
-            "user_id": str(user.id),  # Explicit user_id field
-            "email": user.email,
-            "role": role_for_jwt
-        },
+        data=token_data,
         expires_delta=access_token_expires
     )
+
+    # Verify the token can be decoded immediately (catches SECRET_KEY issues)
+    verify_payload = decode_access_token(access_token)
+    if verify_payload is None:
+        logger.error(f"[LOGIN] CRITICAL: Token created but cannot be decoded! SECRET_KEY mismatch?")
+        logger.error(f"[LOGIN] SECRET_KEY (first 8 chars): {settings.SECRET_KEY[:8]}...")
+        logger.error(f"[LOGIN] ALGORITHM: {settings.ALGORITHM}")
+    else:
+        logger.info(f"[LOGIN] Token created and verified for user: {user.email} (sub={token_data['sub']})")
 
     # Safely extract role value (handle enum or string)
     user_role = getattr(user, 'role', None)
@@ -166,4 +181,18 @@ def forgot_password(email: str, db: Session = Depends(get_db)):
     return {
         "success": True,
         "message": "If an account with this email exists, a password reset link has been sent."
+    }
+
+
+@router.get("/verify-token")
+def verify_token(current_user: User = Depends(get_current_user)):
+    """Verify that a token is valid and return user info. Use to diagnose auth issues."""
+    user_role = getattr(current_user, 'role', None)
+    role_value = user_role.value if hasattr(user_role, 'value') else str(user_role) if user_role else "owner"
+
+    return {
+        "valid": True,
+        "user_id": str(current_user.id),
+        "email": current_user.email,
+        "role": role_value.upper(),
     }

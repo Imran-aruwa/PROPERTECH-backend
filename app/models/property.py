@@ -51,12 +51,12 @@ class Unit(Base):
     property_id = Column(Uuid, ForeignKey("properties.id"), nullable=False)
 
     unit_number = Column(String, nullable=False)
-    bedrooms = Column(Integer)
-    bathrooms = Column(Float)
-    toilets = Column(Integer, default=0)  # Separate toilet count
-    square_feet = Column(Integer)
-    monthly_rent = Column(Float)
-    status = Column(String, default="vacant")  # vacant, occupied, maintenance
+    bedrooms = Column(Integer, default=1, server_default="1")
+    bathrooms = Column(Float, default=1.0, server_default="1")
+    toilets = Column(Integer, default=1, server_default="1")
+    square_feet = Column(Integer, default=500, server_default="500")
+    monthly_rent = Column(Float, default=0, server_default="0")
+    status = Column(String, default="vacant", server_default="vacant")
 
     # Master bedroom
     has_master_bedroom = Column(Boolean, default=False)
