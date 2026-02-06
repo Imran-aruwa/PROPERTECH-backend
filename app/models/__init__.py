@@ -56,6 +56,19 @@ except ImportError:
     Viewing = None
     ViewingStatus = None
 
+try:
+    from app.models.inspection import (
+        Inspection, InspectionItem, InspectionMedia,
+        InspectionMeterReading, InspectionStatus, InspectionType
+    )
+except ImportError:
+    Inspection = None
+    InspectionItem = None
+    InspectionMedia = None
+    InspectionMeterReading = None
+    InspectionStatus = None
+    InspectionType = None
+
 __all__ = [
     "User",
     "UserRole",
