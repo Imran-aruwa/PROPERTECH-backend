@@ -15,6 +15,8 @@ import traceback
 import sys
 
 
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
 from app.api.routes import (
     auth_router,
     payments_router,
@@ -81,6 +83,10 @@ app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=["*"]  # Allow all hosts - Railway proxy handles security
 )
+
+# Trust proxy headers (X-Forwarded-For, X-Forwarded-Proto) from Railway edge
+# This ensures FastAPI generates https:// redirect URLs instead of http://
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])
 
 
 # Compression: GZip responses
@@ -424,6 +430,7 @@ async def shutdown_event():
     logger.info("Application shutdown complete")
 
 
+
 # ==================== REQUEST LOGGING ====================
 
 
@@ -433,7 +440,7 @@ async def log_requests(request: Request, call_next):
     # Skip logging for health checks
     if request.url.path in ["/health", "/status"]:
         return await call_next(request)
-    
+
     start_time = datetime.utcnow()
     logger.info(f">> {request.method} {request.url.path} - {request.client.host}")
 
