@@ -15,8 +15,6 @@ import traceback
 import sys
 
 
-from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
-
 from app.api.routes import (
     auth_router,
     payments_router,
@@ -83,10 +81,6 @@ app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=["*"]  # Allow all hosts - Railway proxy handles security
 )
-
-# Trust proxy headers (X-Forwarded-For, X-Forwarded-Proto) from Railway edge
-# This ensures FastAPI generates https:// redirect URLs instead of http://
-app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])
 
 
 # Compression: GZip responses
