@@ -23,3 +23,7 @@ class Incident(Base, TimestampMixin):
     severity = Column(SQLEnum(IncidentSeverity), default=IncidentSeverity.MEDIUM)
     reported_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     resolved_at = Column(DateTime, nullable=True)
+
+    # Relationships
+    staff = relationship("Staff", backref="incidents")
+    property = relationship("Property", backref="incidents")

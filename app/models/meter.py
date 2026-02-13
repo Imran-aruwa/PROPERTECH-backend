@@ -15,3 +15,7 @@ class MeterReading(Base, TimestampMixin):
     electricity_reading = Column(Float, nullable=True)
     recorded_by = Column(String(255), nullable=False)
     notes = Column(String(500), nullable=True)
+
+    # Relationships
+    unit = relationship("Unit", backref="meter_readings")
+    property = relationship("Property", backref="meter_readings")

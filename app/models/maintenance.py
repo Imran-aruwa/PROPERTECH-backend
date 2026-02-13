@@ -28,3 +28,8 @@ class MaintenanceRequest(Base, TimestampMixin):
     priority = Column(SQLEnum(MaintenancePriority), default=MaintenancePriority.MEDIUM)
     status = Column(SQLEnum(MaintenanceStatus), default=MaintenanceStatus.PENDING)
     notes = Column(Text, nullable=True)
+
+    # Relationships
+    tenant = relationship("Tenant", backref="maintenance_requests")
+    property = relationship("Property", backref="maintenance_requests")
+    unit = relationship("Unit", backref="maintenance_requests")

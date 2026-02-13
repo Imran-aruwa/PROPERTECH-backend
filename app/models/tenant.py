@@ -21,8 +21,8 @@ class Tenant(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False, index=True)
 
     # Property/Unit relationship
-    property_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=True, index=True)
-    unit_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=True, index=True)
+    property_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("properties.id"), nullable=True, index=True)
+    unit_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("units.id"), nullable=True, index=True)
     
     # Tenant details
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)

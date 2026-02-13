@@ -2,8 +2,8 @@
 Lead Model - Agent Lead Management
 """
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, Float, Text, Uuid, Enum
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Column, String, DateTime, Float, Text, Uuid, ForeignKey, Enum as SQLEnum
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 import uuid
 import enum
 
@@ -29,7 +29,7 @@ class Lead(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
 
     # Agent who owns this lead
-    agent_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    agent_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False, index=True)
 
     # Lead details
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -42,7 +42,7 @@ class Lead(Base):
 
     # Lead tracking
     status: Mapped[LeadStatus] = mapped_column(
-        Enum(LeadStatus, name="lead_status"),
+        SQLEnum(LeadStatus, name="lead_status"),
         default=LeadStatus.NEW,
         index=True
     )
@@ -53,3 +53,6 @@ class Lead(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_contacted_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+
+    # Relationships
+    agent = relationship("User", backref="leads")

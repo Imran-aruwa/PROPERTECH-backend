@@ -15,3 +15,7 @@ class Equipment(Base, TimestampMixin):
     status = Column(String(50), default="working")
     last_maintenance = Column(String(255), nullable=True)
     notes = Column(Text, nullable=True)
+
+    # Relationships
+    property = relationship("Property", backref="equipment")
+    unit = relationship("Unit", backref="equipment")

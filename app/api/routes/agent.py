@@ -68,45 +68,119 @@ def get_agent_dashboard(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get agent dashboard with properties and earnings"""
+    """Get agent dashboard with properties, leads, commissions and available listings"""
     if current_user.role != UserRole.AGENT:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    # Get agent's properties
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # Get ALL properties in the system (agents can see/manage all properties)
     properties = db.query(Property).all()
-
-    if not properties:
-        return {"success": True, "properties": 0, "metrics": {}}
-
-    property_ids = [p.id for p in properties]
-
-    # Calculate metrics
-    total_units = db.query(Unit).filter(Unit.property_id.in_(property_ids)).count()
-    occupied_units = db.query(Unit).filter(
-        and_(Unit.property_id.in_(property_ids), Unit.status.in_(OCCUPIED_STATUSES))
-    ).count()
+    logger.info(f"[AGENT_DASHBOARD] Total properties in system: {len(properties)}")
 
     today = datetime.utcnow().date()
     current_month_start = datetime(today.year, today.month, 1).date()
-    current_month_end = datetime(today.year, today.month + 1 if today.month < 12 else 1, 1).date() - timedelta(days=1)
+    if today.month == 12:
+        next_month_start = datetime(today.year + 1, 1, 1).date()
+    else:
+        next_month_start = datetime(today.year, today.month + 1, 1).date()
 
+    # ===== AVAILABLE PROPERTIES (with at least 1 vacant unit) =====
+    available_properties_list = []
+    total_vacant_units = 0
+
+    for prop in properties:
+        vacant_units = db.query(Unit).filter(
+            and_(Unit.property_id == prop.id, Unit.status == "vacant")
+        ).all()
+
+        if len(vacant_units) > 0:
+            total_vacant_units += len(vacant_units)
+            # Calculate rent range
+            rents = [u.monthly_rent for u in vacant_units if u.monthly_rent]
+            min_rent = min(rents) if rents else 0
+            max_rent = max(rents) if rents else 0
+
+            available_properties_list.append({
+                "id": str(prop.id),
+                "name": prop.name,
+                "address": prop.address,
+                "city": prop.city,
+                "image_url": prop.image_url,
+                "vacant_units": len(vacant_units),
+                "min_rent": float(min_rent) if min_rent else None,
+                "max_rent": float(max_rent) if max_rent else None,
+                "total_units": db.query(Unit).filter(Unit.property_id == prop.id).count()
+            })
+
+    # Sort by most vacant units first
+    available_properties_list.sort(key=lambda x: x["vacant_units"], reverse=True)
+    logger.info(f"[AGENT_DASHBOARD] Available properties (with vacancies): {len(available_properties_list)}")
+
+    # ===== ACTIVE LEADS =====
+    active_leads = db.query(Lead).filter(
+        and_(
+            Lead.agent_id == current_user.id,
+            Lead.status.in_([LeadStatus.NEW, LeadStatus.CONTACTED, LeadStatus.QUALIFIED, LeadStatus.NEGOTIATING])
+        )
+    ).count()
+
+    total_leads = db.query(Lead).filter(Lead.agent_id == current_user.id).count()
+
+    # ===== LEASES THIS MONTH (tenants with lease_start in current month) =====
+    leases_this_month = db.query(Tenant).filter(
+        and_(
+            Tenant.lease_start >= current_month_start,
+            Tenant.lease_start < next_month_start
+        )
+    ).count()
+
+    # ===== COMMISSION EARNED (this month) =====
     collected_rent = db.query(func.sum(Payment.amount))\
         .filter(
             and_(
                 Payment.payment_type == PaymentType.RENT,
                 Payment.status == PaymentStatus.COMPLETED,
                 Payment.payment_date >= current_month_start,
-                Payment.payment_date <= current_month_end
+                Payment.payment_date < next_month_start
             )
         ).scalar() or 0
 
-    # Commission: 5% of collections
-    commission = collected_rent * 0.05
+    water_collected = db.query(func.sum(Payment.amount))\
+        .filter(
+            and_(
+                Payment.payment_type == PaymentType.WATER,
+                Payment.status == PaymentStatus.COMPLETED,
+                Payment.payment_date >= current_month_start,
+                Payment.payment_date < next_month_start
+            )
+        ).scalar() or 0
 
-    # Count tenants
+    electricity_collected = db.query(func.sum(Payment.amount))\
+        .filter(
+            and_(
+                Payment.payment_type == PaymentType.ELECTRICITY,
+                Payment.status == PaymentStatus.COMPLETED,
+                Payment.payment_date >= current_month_start,
+                Payment.payment_date < next_month_start
+            )
+        ).scalar() or 0
+
+    commission_earned = (float(collected_rent) * 0.05) + (float(water_collected) * 0.02) + (float(electricity_collected) * 0.02)
+
+    # ===== ADDITIONAL METRICS =====
+    total_units = sum(
+        db.query(Unit).filter(Unit.property_id == p.id).count()
+        for p in properties
+    )
+    occupied_units = sum(
+        db.query(Unit).filter(
+            and_(Unit.property_id == p.id, Unit.status.in_(OCCUPIED_STATUSES))
+        ).count()
+        for p in properties
+    )
     total_tenants = db.query(Tenant).filter(Tenant.status == "active").count()
-
-    # Pending amount
     pending_amount = db.query(func.sum(Payment.amount))\
         .filter(
             and_(
@@ -115,13 +189,14 @@ def get_agent_dashboard(
             )
         ).scalar() or 0
 
-    # Recent activities
+    # ===== RECENT ACTIVITIES =====
     recent_activities = []
+
+    # Recent payments
     recent_payments = db.query(Payment)\
         .order_by(desc(Payment.created_at))\
         .limit(5)\
         .all()
-
     for p in recent_payments:
         recent_activities.append({
             "type": "payment",
@@ -129,13 +204,52 @@ def get_agent_dashboard(
             "timestamp": p.created_at.isoformat() if p.created_at else None
         })
 
+    # Recent leads
+    recent_leads = db.query(Lead)\
+        .filter(Lead.agent_id == current_user.id)\
+        .order_by(desc(Lead.created_at))\
+        .limit(3)\
+        .all()
+    for l in recent_leads:
+        recent_activities.append({
+            "type": "lead",
+            "description": f"Lead: {l.name} - {l.status.value}",
+            "timestamp": l.created_at.isoformat() if l.created_at else None
+        })
+
+    # Sort by timestamp
+    recent_activities.sort(key=lambda x: x.get("timestamp") or "", reverse=True)
+
+    # ===== UPCOMING VIEWINGS =====
+    upcoming_viewings = db.query(Viewing).filter(
+        and_(
+            Viewing.agent_id == current_user.id,
+            Viewing.status == ViewingStatus.SCHEDULED,
+            Viewing.viewing_date >= datetime.utcnow()
+        )
+    ).count()
+
     return {
         "success": True,
+        # Primary stat cards (what frontend expects)
+        "available_properties": len(available_properties_list),
+        "active_leads": active_leads,
+        "leases_this_month": leases_this_month,
+        "commission_earned": round(commission_earned, 2),
+        # Additional metrics
         "total_properties": len(properties),
+        "total_units": total_units,
+        "occupied_units": occupied_units,
+        "total_vacant_units": total_vacant_units,
         "total_tenants": total_tenants,
+        "total_leads": total_leads,
+        "upcoming_viewings": upcoming_viewings,
         "rent_collected": float(collected_rent),
         "pending_amount": float(pending_amount),
-        "recent_activities": recent_activities
+        # Available properties listing (for the dashboard section)
+        "properties": available_properties_list,
+        # Recent activities
+        "recent_activities": recent_activities[:10]
     }
 
 

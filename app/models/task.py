@@ -23,3 +23,7 @@ class Task(Base, TimestampMixin):
     status = Column(SQLEnum(TaskStatus), default=TaskStatus.PENDING)
     due_date = Column(DateTime, nullable=False)
     completed_at = Column(DateTime, nullable=True)
+
+    # Relationships
+    assignee = relationship("Staff", backref="tasks")
+    property = relationship("Property", backref="tasks")

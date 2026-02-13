@@ -2,8 +2,8 @@
 Viewing Model - Property Viewing Management
 """
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, Text, Uuid, Enum
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Column, String, DateTime, Text, Uuid, ForeignKey, Enum as SQLEnum
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 import uuid
 import enum
 
@@ -27,10 +27,10 @@ class Viewing(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
 
     # Agent who scheduled this viewing
-    agent_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    agent_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False, index=True)
 
     # Property/Unit being viewed
-    property_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    property_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("properties.id"), nullable=False, index=True)
     unit_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=True)
 
     # Client details
@@ -41,7 +41,7 @@ class Viewing(Base):
     # Viewing details
     viewing_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     status: Mapped[ViewingStatus] = mapped_column(
-        Enum(ViewingStatus, name="viewing_status"),
+        SQLEnum(ViewingStatus, name="viewing_status"),
         default=ViewingStatus.SCHEDULED,
         index=True
     )
@@ -51,3 +51,7 @@ class Viewing(Base):
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    agent = relationship("User", backref="viewings")
+    property = relationship("Property", backref="viewings")

@@ -160,8 +160,8 @@ def create_inspection(
     db.commit()
     db.refresh(inspection)
 
-    # Load relationships for response
-    db.refresh(inspection, ["items", "meter_readings", "property", "unit", "performed_by"])
+    # Expire to force reload of relationships
+    db.expire(inspection)
 
     response = build_inspection_list_response(inspection)
     response["gps_lat"] = inspection.gps_lat

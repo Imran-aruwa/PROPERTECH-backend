@@ -61,7 +61,7 @@ def create_tenant(
     )
     
     # Mark unit as occupied
-    unit.is_occupied = True
+    unit.status = "occupied"
     
     db.add(tenant)
     db.commit()
@@ -95,7 +95,7 @@ def list_tenants(
 
 @router.get("/{tenant_id}", response_model=TenantResponse)
 def get_tenant(
-    tenant_id: int,
+    tenant_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -114,7 +114,7 @@ def get_tenant(
 
 @router.put("/{tenant_id}", response_model=TenantResponse)
 def update_tenant(
-    tenant_id: int,
+    tenant_id: str,
     tenant_update: TenantUpdate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -137,7 +137,7 @@ def update_tenant(
 
 @router.delete("/{tenant_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_tenant(
-    tenant_id: int,
+    tenant_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -149,10 +149,10 @@ def delete_tenant(
     if not tenant:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
     
-    # Mark unit as unoccupied
+    # Mark unit as vacant
     unit = db.query(Unit).filter(Unit.id == tenant.unit_id).first()
     if unit:
-        unit.is_occupied = False
+        unit.status = "vacant"
     
     db.delete(tenant)
     db.commit()
@@ -162,7 +162,7 @@ def delete_tenant(
 
 @router.get("/{tenant_id}/payments", response_model=List[TenantPaymentResponse])
 def get_tenant_payments(
-    tenant_id: int,
+    tenant_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     skip: int = 0,
@@ -189,7 +189,7 @@ def get_tenant_payments(
 
 @router.get("/{tenant_id}/payment-summary")
 def get_payment_summary(
-    tenant_id: int,
+    tenant_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -279,7 +279,7 @@ def get_payment_summary(
 
 @router.post("/{tenant_id}/maintenance", response_model=TenantMaintenanceResponse, status_code=status.HTTP_201_CREATED)
 def submit_maintenance_request(
-    tenant_id: int,
+    tenant_id: str,
     request_in: MaintenanceRequestCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -309,7 +309,7 @@ def submit_maintenance_request(
 
 @router.get("/{tenant_id}/maintenance", response_model=List[TenantMaintenanceResponse])
 def get_maintenance_requests(
-    tenant_id: int,
+    tenant_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     skip: int = 0,
@@ -335,7 +335,7 @@ def get_maintenance_requests(
 
 @router.get("/{tenant_id}/maintenance/{maintenance_id}", response_model=TenantMaintenanceResponse)
 def get_maintenance_request(
-    tenant_id: int,
+    tenant_id: str,
     maintenance_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -362,7 +362,7 @@ def get_maintenance_request(
 
 @router.get("/{tenant_id}/meter-readings")
 def get_meter_readings(
-    tenant_id: int,
+    tenant_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     skip: int = 0,
@@ -402,7 +402,7 @@ def get_meter_readings(
 
 @router.get("/{tenant_id}/current-bills")
 def get_current_bills(
-    tenant_id: int,
+    tenant_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -461,7 +461,7 @@ def get_current_bills(
 
 @router.get("/{tenant_id}/statistics")
 def get_tenant_statistics(
-    tenant_id: int,
+    tenant_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):

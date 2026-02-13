@@ -269,7 +269,7 @@ def get_all_meter_readings(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     # Get all occupied units with their latest readings
-    units = db.query(Unit).filter(Unit.is_occupied == True).all()
+    units = db.query(Unit).filter(Unit.status.in_(OCCUPIED_STATUSES)).all()
 
     unit_readings = []
     for unit in units:
@@ -343,7 +343,7 @@ def record_meter_reading(
 
 @router.get("/meter-readings/{unit_id}", response_model=List[MeterReadingResponse])
 def get_meter_readings(
-    unit_id: int,
+    unit_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     skip: int = 0,
@@ -429,7 +429,7 @@ def get_pending_meter_readings(
     current_month_end = datetime(today.year, today.month + 1 if today.month < 12 else 1, 1).date() - timedelta(days=1)
     
     # Get all occupied units
-    occupied_units = db.query(Unit).filter(Unit.is_occupied == True).all()
+    occupied_units = db.query(Unit).filter(Unit.status.in_(OCCUPIED_STATUSES)).all()
     
     # Get units with readings this month
     units_with_readings = db.query(MeterReading.unit_id).filter(
@@ -453,7 +453,7 @@ def get_pending_meter_readings(
             {
                 "unit_id": u.id,
                 "unit_number": u.unit_number,
-                "type": u.unit_type,
+                "type": u.status,
                 "property_id": u.property_id
             }
             for u in pending_units
@@ -482,7 +482,7 @@ def get_rent_tracking(
     
     # Expected rent
     expected_rent = db.query(func.sum(Unit.monthly_rent))\
-        .filter(and_(Unit.property_id.in_(property_ids), Unit.is_occupied == True))\
+        .filter(and_(Unit.property_id.in_(property_ids), Unit.status.in_(OCCUPIED_STATUSES)))\
         .scalar() or 0
     
     # Collected rent
@@ -599,7 +599,8 @@ def create_maintenance_request(
         "low": MaintenancePriority.LOW,
         "medium": MaintenancePriority.MEDIUM,
         "high": MaintenancePriority.HIGH,
-        "urgent": MaintenancePriority.URGENT
+        "urgent": MaintenancePriority.EMERGENCY,
+        "emergency": MaintenancePriority.EMERGENCY
     }
     priority = priority_map.get(maintenance_data.priority.lower(), MaintenancePriority.MEDIUM)
 
@@ -626,7 +627,7 @@ def create_maintenance_request(
 
 @router.put("/maintenance/{maintenance_id}/status")
 def update_maintenance_status(
-    maintenance_id: int,
+    maintenance_id: str,
     status: MaintenanceStatus,
     notes: Optional[str] = None,
     current_user: User = Depends(get_current_user),
@@ -833,11 +834,11 @@ def get_monthly_report(
     
     total_units = db.query(Unit).filter(Unit.property_id.in_(property_ids)).count()
     occupied_units = db.query(Unit).filter(
-        and_(Unit.property_id.in_(property_ids), Unit.is_occupied == True)
+        and_(Unit.property_id.in_(property_ids), Unit.status.in_(OCCUPIED_STATUSES))
     ).count()
     
     expected_rent = db.query(func.sum(Unit.monthly_rent))\
-        .filter(and_(Unit.property_id.in_(property_ids), Unit.is_occupied == True))\
+        .filter(and_(Unit.property_id.in_(property_ids), Unit.status.in_(OCCUPIED_STATUSES)))\
         .scalar() or 0
     
     collected_rent = db.query(func.sum(Payment.amount))\
@@ -882,7 +883,7 @@ def get_caretaker_properties(
     property_list = []
     for prop in properties:
         units = db.query(Unit).filter(Unit.property_id == prop.id).all()
-        occupied = len([u for u in units if u.is_occupied])
+        occupied = len([u for u in units if u.status in OCCUPIED_STATUSES])
         total_units = len(units)
 
         property_list.append({
@@ -1067,7 +1068,7 @@ def get_rent_summary(
 
     # Current month metrics
     expected_rent = db.query(func.sum(Unit.monthly_rent))\
-        .filter(and_(Unit.property_id.in_(property_ids), Unit.is_occupied == True))\
+        .filter(and_(Unit.property_id.in_(property_ids), Unit.status.in_(OCCUPIED_STATUSES)))\
         .scalar() or 0
 
     collected_rent = db.query(func.sum(Payment.amount))\
@@ -1232,11 +1233,11 @@ def generate_caretaker_report(
 
     total_units = db.query(Unit).filter(Unit.property_id.in_(property_ids)).count()
     occupied_units = db.query(Unit).filter(
-        and_(Unit.property_id.in_(property_ids), Unit.is_occupied == True)
+        and_(Unit.property_id.in_(property_ids), Unit.status.in_(OCCUPIED_STATUSES))
     ).count()
 
     expected_rent = db.query(func.sum(Unit.monthly_rent))\
-        .filter(and_(Unit.property_id.in_(property_ids), Unit.is_occupied == True))\
+        .filter(and_(Unit.property_id.in_(property_ids), Unit.status.in_(OCCUPIED_STATUSES)))\
         .scalar() or 0
 
     collected_rent = db.query(func.sum(Payment.amount))\

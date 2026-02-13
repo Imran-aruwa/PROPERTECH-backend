@@ -510,54 +510,6 @@ def check_out(
     }
 
 
-@router.get("/attendance")
-def get_attendance_record(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-    skip: int = 0,
-    limit: int = 30
-):
-    """Get attendance records for current staff or managed staff"""
-    staff_roles = [UserRole.STAFF, UserRole.HEAD_SECURITY, UserRole.HEAD_GARDENER, UserRole.SECURITY_GUARD, UserRole.GARDENER, UserRole.CARETAKER]
-    if current_user.role not in staff_roles:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
-    from app.models.attendance import Attendance
-    
-    # Get appropriate records based on role
-    if current_user.role in [UserRole.SECURITY_GUARD, UserRole.GARDENER]:
-        # Staff member sees only their own
-        records = db.query(Attendance)\
-            .filter(Attendance.staff_id == current_user.id)\
-            .order_by(desc(Attendance.date))\
-            .offset(skip)\
-            .limit(limit)\
-            .all()
-    else:
-        # Supervisors see their team
-        records = db.query(Attendance)\
-            .order_by(desc(Attendance.date))\
-            .offset(skip)\
-            .limit(limit)\
-            .all()
-    
-    return {
-        "success": True,
-        "records_count": len(records),
-        "records": [
-            {
-                "id": r.id,
-                "staff_id": r.staff_id,
-                "date": r.date.isoformat(),
-                "check_in": r.check_in_time.isoformat() if r.check_in_time else None,
-                "check_out": r.check_out_time.isoformat() if r.check_out_time else None,
-                "hours_worked": r.hours_worked
-            }
-            for r in records
-        ]
-    }
-
-
 @router.get("/attendance-summary")
 def get_attendance_summary(
     current_user: User = Depends(get_current_user),
@@ -672,7 +624,7 @@ def get_incidents(
 
 @router.put("/incidents/{incident_id}/resolve")
 def resolve_incident(
-    incident_id: int,
+    incident_id: str,
     notes: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -702,7 +654,7 @@ def resolve_incident(
 
 @router.post("/tasks")
 def create_task(
-    assigned_to: int,
+    assigned_to: str,
     title: str,
     description: str,
     due_date: datetime,
@@ -739,51 +691,6 @@ def create_task(
     }
 
 
-@router.get("/tasks")
-def get_tasks(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-    skip: int = 0,
-    limit: int = 50
-):
-    """Get tasks assigned to current user or managed by current user"""
-    staff_roles = [UserRole.STAFF, UserRole.HEAD_SECURITY, UserRole.HEAD_GARDENER, UserRole.SECURITY_GUARD, UserRole.GARDENER, UserRole.CARETAKER]
-    if current_user.role not in staff_roles:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
-    if current_user.role in [UserRole.SECURITY_GUARD, UserRole.GARDENER]:
-        # Staff sees tasks assigned to them
-        tasks = db.query(Task)\
-            .filter(Task.assigned_to == current_user.id)\
-            .order_by(desc(Task.due_date))\
-            .offset(skip)\
-            .limit(limit)\
-            .all()
-    else:
-        # Supervisors see all tasks
-        tasks = db.query(Task)\
-            .order_by(desc(Task.due_date))\
-            .offset(skip)\
-            .limit(limit)\
-            .all()
-    
-    return {
-        "success": True,
-        "tasks_count": len(tasks),
-        "tasks": [
-            {
-                "id": t.id,
-                "title": t.title,
-                "description": t.description,
-                "status": t.status,
-                "due_date": t.due_date.isoformat(),
-                "completed_at": t.completed_at.isoformat() if t.completed_at else None
-            }
-            for t in tasks
-        ]
-    }
-
-
 class TaskUpdate(BaseModel):
     status: Optional[str] = None
     title: Optional[str] = None
@@ -792,7 +699,7 @@ class TaskUpdate(BaseModel):
 
 @router.put("/tasks/{task_id}/status")
 def update_task_status(
-    task_id: int,
+    task_id: str,
     task_status: TaskStatus,
     notes: Optional[str] = None,
     current_user: User = Depends(get_current_user),
@@ -826,7 +733,7 @@ def update_task_status(
 
 @router.put("/tasks/{task_id}")
 def update_task(
-    task_id: int,
+    task_id: str,
     task_data: TaskUpdate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)

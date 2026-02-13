@@ -67,6 +67,10 @@ class Staff(Base, TimestampMixin):
         cascade="all, delete-orphan",
     )
 
+    # Parent model relationships
+    user = relationship("User", backref="staff_records")
+    property = relationship("Property", backref="staff_members")
+
     # Self-referential relationship (optional): supervisor & subordinates
     supervisor = relationship(
         "Staff",
