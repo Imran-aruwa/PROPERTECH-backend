@@ -8,14 +8,17 @@ from sqlalchemy import and_, desc
 from typing import List, Optional
 from datetime import datetime, timedelta
 from uuid import UUID
+import uuid as uuid_module
+import logging
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import User, UserRole
 from app.models.tenant import Tenant
-from app.models.property import Unit
+from app.models.property import Property, Unit
 from app.models.payment import Payment, PaymentStatus, PaymentType
 from app.models.maintenance import MaintenanceRequest, MaintenanceStatus, MaintenancePriority
 from app.models.meter import MeterReading
+from app.core.security import get_password_hash
 from app.schemas.tenant import (
     TenantResponse, TenantCreate, TenantUpdate,
     TenantPaymentResponse, TenantMaintenanceResponse,
@@ -23,96 +26,293 @@ from app.schemas.tenant import (
 )
 
 router = APIRouter(tags=["tenants"])
+logger = logging.getLogger(__name__)
 
 
 # ==================== TENANT CRUD ====================
 
-@router.post("/", response_model=TenantResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/", status_code=status.HTTP_201_CREATED)
 def create_tenant(
     tenant_in: TenantCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Create a new tenant (Owner/Agent only)"""
-    if current_user.role not in [UserRole.OWNER, UserRole.AGENT]:
+    """Create a new tenant (Owner/Agent only).
+
+    Accepts the frontend format:
+    {
+        "user": { "full_name": "...", "email": "...", "phone": "...", "password": "...", "role": "tenant" },
+        "unit_id": "uuid",
+        "lease_start": "2026-01-01",
+        "lease_end": "2027-01-01",
+        "rent_amount": 25000,
+        "deposit_amount": 50000,
+        "emergency_contact_name": "...",
+        "emergency_contact_phone": "...",
+        "notes": "..."
+    }
+    """
+    if current_user.role not in [UserRole.OWNER, UserRole.AGENT, UserRole.ADMIN]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
-    # Verify unit exists
-    unit = db.query(Unit).filter(Unit.id == tenant_in.unit_id).first()
-    if not unit:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unit not found")
-    
-    # Check if unit already occupied
-    existing_tenant = db.query(Tenant).filter(
-        and_(
-            Tenant.unit_id == tenant_in.unit_id,
-            Tenant.move_out_date.is_(None)
+
+    logger.info(f"[CREATE_TENANT] Received data: user={tenant_in.user}, unit_id={tenant_in.unit_id}")
+
+    # Resolve tenant details from nested user object or flat fields
+    full_name = tenant_in.full_name
+    email = tenant_in.email
+    phone = tenant_in.phone
+    id_number = tenant_in.id_number
+    password = "TempPass123!"
+
+    if tenant_in.user:
+        full_name = tenant_in.user.full_name or full_name
+        email = tenant_in.user.email or email
+        phone = tenant_in.user.phone or phone
+        id_number = tenant_in.user.id_number or id_number
+        password = tenant_in.user.password or password
+
+    if not full_name or not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="full_name and email are required (either directly or via user object)"
         )
-    ).first()
-    
-    if existing_tenant:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unit already occupied")
-    
+
+    # Verify unit exists
+    unit = None
+    if tenant_in.unit_id:
+        unit = db.query(Unit).filter(Unit.id == str(tenant_in.unit_id)).first()
+        if not unit:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unit not found")
+
+        # Check if unit already occupied
+        existing_tenant = db.query(Tenant).filter(
+            and_(
+                Tenant.unit_id == unit.id,
+                Tenant.status == "active",
+                Tenant.move_out_date.is_(None)
+            )
+        ).first()
+
+        if existing_tenant:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unit already has an active tenant")
+
+    # Create or find user account for the tenant
+    user_id = tenant_in.user_id
+    if not user_id:
+        # Check if user with this email already exists
+        existing_user = db.query(User).filter(User.email == email).first()
+        if existing_user:
+            user_id = existing_user.id
+            logger.info(f"[CREATE_TENANT] Found existing user: {user_id}")
+        else:
+            # Create a new user account
+            name_parts = full_name.strip().split(" ", 1)
+            new_user = User(
+                id=uuid_module.uuid4(),
+                email=email,
+                hashed_password=get_password_hash(password),
+                first_name=name_parts[0],
+                last_name=name_parts[1] if len(name_parts) > 1 else "",
+                full_name=full_name,
+                phone=phone or "",
+                role=UserRole.TENANT,
+                status="active",
+            )
+            db.add(new_user)
+            db.flush()
+            user_id = new_user.id
+            logger.info(f"[CREATE_TENANT] Created new user: {user_id}")
+
+    # Determine property_id
+    property_id = None
+    if tenant_in.property_id:
+        property_id = str(tenant_in.property_id)
+    elif unit:
+        property_id = str(unit.property_id)
+
+    # Parse dates
+    lease_start = None
+    if tenant_in.lease_start:
+        try:
+            lease_start = datetime.fromisoformat(str(tenant_in.lease_start).replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            lease_start = datetime.utcnow()
+    else:
+        lease_start = datetime.utcnow()
+
+    lease_end = None
+    if tenant_in.lease_end:
+        try:
+            lease_end = datetime.fromisoformat(str(tenant_in.lease_end).replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            pass
+
+    move_in_date = None
+    if tenant_in.move_in_date:
+        try:
+            move_in_date = datetime.fromisoformat(str(tenant_in.move_in_date).replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            pass
+    if not move_in_date:
+        move_in_date = lease_start
+
+    # Create tenant record
     tenant = Tenant(
-        user_id=tenant_in.user_id,
-        unit_id=tenant_in.unit_id,
-        move_in_date=tenant_in.move_in_date,
-        move_out_date=tenant_in.move_out_date
+        id=uuid_module.uuid4(),
+        user_id=user_id,
+        unit_id=unit.id if unit else None,
+        property_id=property_id,
+        full_name=full_name,
+        email=email,
+        phone=phone or "",
+        id_number=id_number or "",
+        rent_amount=tenant_in.rent_amount or (unit.monthly_rent if unit else 0),
+        deposit_amount=tenant_in.deposit_amount or 0,
+        lease_start=lease_start,
+        lease_end=lease_end,
+        move_in_date=move_in_date,
+        next_of_kin=tenant_in.emergency_contact_name or tenant_in.next_of_kin or "",
+        nok_phone=tenant_in.emergency_contact_phone or tenant_in.nok_phone or "",
+        status="active",
+        balance_due=0.0,
     )
-    
-    # Mark unit as occupied
-    unit.status = "occupied"
-    
+
     db.add(tenant)
+
+    # Mark unit as occupied
+    if unit:
+        unit.status = "occupied"
+        logger.info(f"[CREATE_TENANT] Marking unit {unit.id} as occupied")
+
     db.commit()
     db.refresh(tenant)
-    return tenant
+    logger.info(f"[CREATE_TENANT] Tenant created: {tenant.id}, unit status: {unit.status if unit else 'N/A'}")
+
+    return {
+        "success": True,
+        "id": str(tenant.id),
+        "full_name": tenant.full_name,
+        "email": tenant.email,
+        "phone": tenant.phone,
+        "user_id": str(tenant.user_id) if tenant.user_id else None,
+        "unit_id": str(tenant.unit_id) if tenant.unit_id else None,
+        "property_id": str(tenant.property_id) if tenant.property_id else None,
+        "rent_amount": tenant.rent_amount,
+        "status": tenant.status,
+        "balance_due": tenant.balance_due or 0,
+        "lease_start": tenant.lease_start.isoformat() if tenant.lease_start else None,
+        "lease_end": tenant.lease_end.isoformat() if tenant.lease_end else None,
+        "created_at": tenant.created_at.isoformat() if tenant.created_at else None,
+    }
 
 
-@router.get("/", response_model=List[TenantResponse])
+@router.get("/")
 def list_tenants(
     skip: int = 0,
     limit: int = 100,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """List all tenants (Owner/Agent) or own tenant profile"""
+    """List all tenants with enriched data (unit and property info)"""
     if current_user.role == UserRole.OWNER:
-        # Owner sees all tenants
-        tenants = db.query(Tenant).offset(skip).limit(limit).all()
-    elif current_user.role == UserRole.AGENT:
-        # Agent sees tenants in their properties
+        # Owner sees tenants in their properties
+        owner_properties = db.query(Property).filter(Property.user_id == current_user.id).all()
+        property_ids = [p.id for p in owner_properties]
+        if property_ids:
+            tenants = db.query(Tenant).filter(
+                Tenant.property_id.in_([str(pid) for pid in property_ids])
+            ).offset(skip).limit(limit).all()
+        else:
+            # Fallback: show all tenants (owner might not have property_id set on all)
+            tenants = db.query(Tenant).offset(skip).limit(limit).all()
+    elif current_user.role in [UserRole.AGENT, UserRole.ADMIN, UserRole.CARETAKER]:
         tenants = db.query(Tenant).offset(skip).limit(limit).all()
     elif current_user.role == UserRole.TENANT:
-        # Tenant sees only their own profile
         tenant = db.query(Tenant).filter(Tenant.user_id == current_user.id).first()
         tenants = [tenant] if tenant else []
     else:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
-    return tenants
+
+    # Enrich with unit and property data
+    tenant_list = []
+    for t in tenants:
+        if t is None:
+            continue
+        unit = db.query(Unit).filter(Unit.id == t.unit_id).first() if t.unit_id else None
+        prop = db.query(Property).filter(Property.id == t.property_id).first() if t.property_id else None
+
+        tenant_list.append({
+            "id": str(t.id),
+            "full_name": t.full_name,
+            "email": t.email,
+            "phone": t.phone,
+            "user_id": str(t.user_id) if t.user_id else None,
+            "unit_id": str(t.unit_id) if t.unit_id else None,
+            "property_id": str(t.property_id) if t.property_id else None,
+            "unit_number": unit.unit_number if unit else None,
+            "property_name": prop.name if prop else None,
+            "rent_amount": t.rent_amount,
+            "deposit_amount": t.deposit_amount,
+            "status": t.status or "active",
+            "balance_due": t.balance_due or 0,
+            "lease_start": t.lease_start.isoformat() if t.lease_start else None,
+            "lease_end": t.lease_end.isoformat() if t.lease_end else None,
+            "move_in_date": t.move_in_date.isoformat() if t.move_in_date else None,
+            "move_out_date": t.move_out_date.isoformat() if t.move_out_date else None,
+            "id_number": t.id_number,
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+            "updated_at": t.updated_at.isoformat() if t.updated_at else None,
+        })
+
+    return tenant_list
 
 
-@router.get("/{tenant_id}", response_model=TenantResponse)
+@router.get("/{tenant_id}")
 def get_tenant(
     tenant_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get tenant details"""
+    """Get tenant details with unit and property info"""
     tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
-    
+
     if not tenant:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
-    
+
     # Authorization: Tenant can only see own, Owner/Agent/Caretaker can see all
     if current_user.role == UserRole.TENANT and current_user.id != tenant.user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    
-    return tenant
+
+    unit = db.query(Unit).filter(Unit.id == tenant.unit_id).first() if tenant.unit_id else None
+    prop = db.query(Property).filter(Property.id == tenant.property_id).first() if tenant.property_id else None
+
+    return {
+        "id": str(tenant.id),
+        "full_name": tenant.full_name,
+        "email": tenant.email,
+        "phone": tenant.phone,
+        "user_id": str(tenant.user_id) if tenant.user_id else None,
+        "unit_id": str(tenant.unit_id) if tenant.unit_id else None,
+        "property_id": str(tenant.property_id) if tenant.property_id else None,
+        "unit_number": unit.unit_number if unit else None,
+        "property_name": prop.name if prop else None,
+        "rent_amount": tenant.rent_amount,
+        "deposit_amount": tenant.deposit_amount,
+        "status": tenant.status or "active",
+        "balance_due": tenant.balance_due or 0,
+        "lease_start": tenant.lease_start.isoformat() if tenant.lease_start else None,
+        "lease_end": tenant.lease_end.isoformat() if tenant.lease_end else None,
+        "move_in_date": tenant.move_in_date.isoformat() if tenant.move_in_date else None,
+        "move_out_date": tenant.move_out_date.isoformat() if tenant.move_out_date else None,
+        "id_number": tenant.id_number,
+        "next_of_kin": tenant.next_of_kin,
+        "nok_phone": tenant.nok_phone,
+        "created_at": tenant.created_at.isoformat() if tenant.created_at else None,
+        "updated_at": tenant.updated_at.isoformat() if tenant.updated_at else None,
+    }
 
 
-@router.put("/{tenant_id}", response_model=TenantResponse)
+@router.put("/{tenant_id}")
 def update_tenant(
     tenant_id: str,
     tenant_update: TenantUpdate,
@@ -129,10 +329,19 @@ def update_tenant(
     
     for key, value in tenant_update.dict(exclude_unset=True).items():
         setattr(tenant, key, value)
-    
+
     db.commit()
     db.refresh(tenant)
-    return tenant
+
+    return {
+        "success": True,
+        "id": str(tenant.id),
+        "full_name": tenant.full_name,
+        "email": tenant.email,
+        "phone": tenant.phone,
+        "status": tenant.status,
+        "rent_amount": tenant.rent_amount,
+    }
 
 
 @router.delete("/{tenant_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -160,7 +369,7 @@ def delete_tenant(
 
 # ==================== TENANT PAYMENTS ====================
 
-@router.get("/{tenant_id}/payments", response_model=List[TenantPaymentResponse])
+@router.get("/{tenant_id}/payments")
 def get_tenant_payments(
     tenant_id: str,
     current_user: User = Depends(get_current_user),
