@@ -15,6 +15,15 @@ class UnitStatus(str, Enum):
     MORTGAGED = "mortgaged"     # Unit is under mortgage
     MAINTENANCE = "maintenance" # Under maintenance, not available
 
+
+class OccupancyType(str, Enum):
+    """How the unit is being used/occupied"""
+    AVAILABLE = "available"             # Available for rent or sale
+    RENTED = "rented"                   # Rented out to a tenant
+    MORTGAGED = "mortgaged"             # Under mortgage
+    BOUGHT = "bought"                   # Purchased/sold
+    OWNER_OCCUPIED = "owner_occupied"   # Occupied by the owner
+
 class Property(Base):
     __tablename__ = "properties"
 
@@ -64,6 +73,9 @@ class Unit(Base):
     # Servant Quarters (SQ)
     has_servant_quarters = Column(Boolean, default=False)
     sq_bathrooms = Column(Integer, default=0)  # Bathrooms in servant quarters
+
+    # Occupancy type
+    occupancy_type = Column(String, default="available", server_default="available")
 
     # Description/notes for unit-specific details
     description = Column(Text, nullable=True)

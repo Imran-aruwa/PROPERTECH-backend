@@ -80,7 +80,11 @@ def create_tenant(
     # Verify unit exists
     unit = None
     if tenant_in.unit_id:
-        unit = db.query(Unit).filter(Unit.id == str(tenant_in.unit_id)).first()
+        try:
+            unit_uuid = uuid_module.UUID(str(tenant_in.unit_id))
+            unit = db.query(Unit).filter(Unit.id == unit_uuid).first()
+        except (ValueError, AttributeError):
+            unit = db.query(Unit).filter(Unit.id == str(tenant_in.unit_id)).first()
         if not unit:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unit not found")
 
@@ -123,12 +127,15 @@ def create_tenant(
             user_id = new_user.id
             logger.info(f"[CREATE_TENANT] Created new user: {user_id}")
 
-    # Determine property_id
+    # Determine property_id (keep as UUID, not string)
     property_id = None
     if tenant_in.property_id:
-        property_id = str(tenant_in.property_id)
-    elif unit:
-        property_id = str(unit.property_id)
+        try:
+            property_id = uuid_module.UUID(str(tenant_in.property_id))
+        except (ValueError, AttributeError):
+            property_id = None
+    if not property_id and unit:
+        property_id = unit.property_id
 
     # Parse dates
     lease_start = None
@@ -220,10 +227,12 @@ def list_tenants(
         property_ids = [p.id for p in owner_properties]
         if property_ids:
             tenants = db.query(Tenant).filter(
-                Tenant.property_id.in_([str(pid) for pid in property_ids])
+                Tenant.property_id.in_(property_ids)
             ).offset(skip).limit(limit).all()
         else:
-            # Fallback: show all tenants (owner might not have property_id set on all)
+            tenants = []
+        # Fallback: if no tenants found by property_id, try all tenants (owner might not have property_id set)
+        if not tenants:
             tenants = db.query(Tenant).offset(skip).limit(limit).all()
     elif current_user.role in [UserRole.AGENT, UserRole.ADMIN, UserRole.CARETAKER]:
         tenants = db.query(Tenant).offset(skip).limit(limit).all()

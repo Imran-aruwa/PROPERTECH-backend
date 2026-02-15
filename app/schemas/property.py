@@ -37,6 +37,8 @@ class UnitBase(BaseModel):
     # Servant Quarters
     has_servant_quarters: Optional[bool] = False
     sq_bathrooms: Optional[int] = 0  # Bathrooms in servant quarters
+    # Occupancy type
+    occupancy_type: Optional[str] = "available"
     # Description/notes
     description: Optional[str] = None
 
@@ -51,6 +53,7 @@ class UnitUpdate(BaseModel):
     square_feet: Optional[int] = None
     monthly_rent: Optional[float] = None
     status: Optional[str] = None
+    occupancy_type: Optional[str] = None
     has_master_bedroom: Optional[bool] = None
     has_servant_quarters: Optional[bool] = None
     sq_bathrooms: Optional[int] = None
