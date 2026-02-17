@@ -59,7 +59,8 @@ except ImportError:
 try:
     from app.models.inspection import (
         Inspection, InspectionItem, InspectionMedia,
-        InspectionMeterReading, InspectionStatus, InspectionType
+        InspectionMeterReading, InspectionStatus, InspectionType,
+        InspectionTemplate, InspectionSignature, SeverityLevel
     )
 except ImportError:
     Inspection = None
@@ -68,6 +69,9 @@ except ImportError:
     InspectionMeterReading = None
     InspectionStatus = None
     InspectionType = None
+    InspectionTemplate = None
+    InspectionSignature = None
+    SeverityLevel = None
 
 __all__ = [
     "User",

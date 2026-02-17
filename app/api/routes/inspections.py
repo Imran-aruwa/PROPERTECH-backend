@@ -1,6 +1,7 @@
 """
-Inspection Routes - Offline-first property inspection system
-Supports create, media upload, list, detail, review, and lock operations
+Inspection Routes - Universal Inspection Engine
+Supports internal + external inspections, templates, scoring, signatures,
+audit trails, and subscription gating.
 """
 import base64
 import logging
@@ -10,7 +11,7 @@ import uuid as uuid_module
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy import and_, desc
 from sqlalchemy.orm import Session, joinedload
 
@@ -20,14 +21,17 @@ from app.models.user import User, UserRole
 from app.models.property import Property, Unit
 from app.models.inspection import (
     Inspection, InspectionItem, InspectionMedia,
-    InspectionMeterReading, InspectionStatus
+    InspectionMeterReading, InspectionStatus, InspectionTemplate,
+    InspectionSignature
 )
 from app.schemas.inspection import (
     InspectionCreateRequest, InspectionMediaUpload,
     InspectionReviewRequest, InspectionListResponse,
     InspectionDetailResponse, InspectionPaginatedResponse,
     InspectionItemResponse, InspectionMediaResponse,
-    InspectionMeterReadingResponse
+    InspectionMeterReadingResponse, InspectionSignatureResponse,
+    InspectionTemplateCreate, InspectionTemplateUpdate,
+    InspectionTemplateResponse, InspectionSignatureCreate
 )
 
 logger = logging.getLogger(__name__)
@@ -40,17 +44,16 @@ INSPECTION_ROLES = {
     UserRole.CARETAKER: "caretaker",
 }
 
+# External inspection types require premium
+EXTERNAL_TYPES = {"pre_purchase", "insurance", "valuation"}
+
 
 def get_user_accessible_property_ids(db: Session, user: User) -> Optional[list]:
-    """
-    Get property IDs accessible to user based on role.
-    Returns None if user has no property-based access restrictions (shouldn't happen).
-    """
+    """Get property IDs accessible to user based on role."""
     if user.role == UserRole.OWNER:
         props = db.query(Property.id).filter(Property.user_id == user.id).all()
         return [p.id for p in props]
     elif user.role == UserRole.AGENT:
-        # Agents manage all properties in the system (consistent with agent portal)
         props = db.query(Property.id).all()
         return [p.id for p in props]
     return []
@@ -58,7 +61,7 @@ def get_user_accessible_property_ids(db: Session, user: User) -> Optional[list]:
 
 def build_inspection_list_response(inspection: Inspection) -> dict:
     """Build list response dict with display fields."""
-    data = {
+    return {
         "id": inspection.id,
         "client_uuid": inspection.client_uuid,
         "property_id": inspection.property_id,
@@ -69,25 +72,38 @@ def build_inspection_list_response(inspection: Inspection) -> dict:
         "status": inspection.status,
         "inspection_date": inspection.inspection_date,
         "notes": inspection.notes,
+        "is_external": inspection.is_external,
+        "overall_score": inspection.overall_score,
+        "pass_fail": inspection.pass_fail,
+        "inspector_name": inspection.inspector_name,
         "created_at": inspection.created_at,
         "updated_at": inspection.updated_at,
         "property_name": inspection.property.name if inspection.property else None,
         "unit_number": inspection.unit.unit_number if inspection.unit else None,
         "performed_by_name": inspection.performed_by.full_name if inspection.performed_by else None,
     }
-    return data
 
 
-# === 1. POST /api/inspections/ - Create inspection ===
+def compute_inspection_score(items: list) -> tuple:
+    """Compute overall score and pass/fail from scored items."""
+    scored = [i for i in items if i.score is not None]
+    if not scored:
+        return None, None
+    avg = sum(i.score for i in scored) / len(scored)
+    return round(avg, 2), "pass" if avg >= 3.0 else "fail"
+
+
+# ============================================
+# 1. POST /api/inspections/ - Create inspection
+# ============================================
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_inspection(
-    request: InspectionCreateRequest,
+    request_data: InspectionCreateRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Create a new inspection with items and meter readings (offline-sync)."""
-    # Check role permission
     if current_user.role not in INSPECTION_ROLES:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -96,7 +112,7 @@ def create_inspection(
 
     # Check for duplicate client_uuid
     existing = db.query(Inspection).filter(
-        Inspection.client_uuid == request.client_uuid
+        Inspection.client_uuid == request_data.client_uuid
     ).first()
     if existing:
         raise HTTPException(
@@ -105,35 +121,40 @@ def create_inspection(
         )
 
     # Verify property and unit exist
-    prop = db.query(Property).filter(Property.id == request.inspection.property_id).first()
+    prop = db.query(Property).filter(Property.id == request_data.inspection.property_id).first()
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found")
 
-    unit = db.query(Unit).filter(Unit.id == request.inspection.unit_id).first()
+    unit = db.query(Unit).filter(Unit.id == request_data.inspection.unit_id).first()
     if not unit:
         raise HTTPException(status_code=404, detail="Unit not found")
 
     # Create inspection
     inspection = Inspection(
-        client_uuid=request.client_uuid,
-        property_id=request.inspection.property_id,
-        unit_id=request.inspection.unit_id,
+        client_uuid=request_data.client_uuid,
+        property_id=request_data.inspection.property_id,
+        unit_id=request_data.inspection.unit_id,
         performed_by_id=current_user.id,
         performed_by_role=INSPECTION_ROLES[current_user.role],
-        inspection_type=request.inspection.inspection_type,
+        inspection_type=request_data.inspection.inspection_type,
         status=InspectionStatus.SUBMITTED.value,
-        inspection_date=request.inspection.inspection_date,
-        gps_lat=request.inspection.gps_lat,
-        gps_lng=request.inspection.gps_lng,
-        device_id=request.inspection.device_id,
-        offline_created_at=request.inspection.offline_created_at,
-        notes=request.inspection.notes,
+        inspection_date=request_data.inspection.inspection_date,
+        gps_lat=request_data.inspection.gps_lat,
+        gps_lng=request_data.inspection.gps_lng,
+        device_id=request_data.inspection.device_id,
+        offline_created_at=request_data.inspection.offline_created_at,
+        notes=request_data.inspection.notes,
+        is_external=request_data.inspection.is_external or False,
+        template_id=request_data.inspection.template_id,
+        inspector_name=request_data.inspection.inspector_name,
+        inspector_credentials=request_data.inspection.inspector_credentials,
+        inspector_company=request_data.inspection.inspector_company,
     )
     db.add(inspection)
-    db.flush()  # Get the ID without committing
+    db.flush()
 
     # Create inspection items
-    for item_data in request.items:
+    for item_data in request_data.items:
         item = InspectionItem(
             inspection_id=inspection.id,
             client_uuid=item_data.client_uuid,
@@ -141,11 +162,16 @@ def create_inspection(
             category=item_data.category,
             condition=item_data.condition,
             comment=item_data.comment,
+            score=item_data.score,
+            severity=item_data.severity,
+            pass_fail=item_data.pass_fail,
+            requires_followup=item_data.requires_followup or False,
+            photo_required=item_data.photo_required or False,
         )
         db.add(item)
 
     # Create meter readings
-    for reading_data in request.meter_readings:
+    for reading_data in request_data.meter_readings:
         reading = InspectionMeterReading(
             inspection_id=inspection.id,
             client_uuid=reading_data.client_uuid,
@@ -160,7 +186,16 @@ def create_inspection(
     db.commit()
     db.refresh(inspection)
 
-    # Expire to force reload of relationships
+    # Compute score from items
+    if request_data.items:
+        db.expire(inspection)
+        score, pf = compute_inspection_score(inspection.items)
+        if score is not None:
+            inspection.overall_score = score
+            inspection.pass_fail = pf
+            db.commit()
+            db.refresh(inspection)
+
     db.expire(inspection)
 
     response = build_inspection_list_response(inspection)
@@ -168,6 +203,10 @@ def create_inspection(
     response["gps_lng"] = inspection.gps_lng
     response["device_id"] = inspection.device_id
     response["offline_created_at"] = inspection.offline_created_at
+    response["template_id"] = inspection.template_id
+    response["inspector_credentials"] = inspection.inspector_credentials
+    response["inspector_company"] = inspection.inspector_company
+    response["report_url"] = inspection.report_url
     response["items"] = [
         InspectionItemResponse.model_validate(i).model_dump() for i in inspection.items
     ]
@@ -175,11 +214,14 @@ def create_inspection(
         InspectionMeterReadingResponse.model_validate(r).model_dump() for r in inspection.meter_readings
     ]
     response["media"] = []
+    response["signatures"] = []
 
     return response
 
 
-# === 2. POST /api/inspections/{id}/media/ - Upload media ===
+# ============================================
+# 2. POST /api/inspections/{id}/media/ - Upload media
+# ============================================
 
 @router.post("/{inspection_id}/media/", status_code=status.HTTP_201_CREATED)
 def upload_inspection_media(
@@ -193,24 +235,21 @@ def upload_inspection_media(
     if not inspection:
         raise HTTPException(status_code=404, detail="Inspection not found")
 
-    # Only the person who performed the inspection can upload media
     if inspection.performed_by_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    # Cannot add media to locked inspections
     if inspection.status == InspectionStatus.LOCKED.value:
         raise HTTPException(status_code=400, detail="Cannot modify locked inspection")
 
-    # Check duplicate media client_uuid
+    # Check duplicate
     existing = db.query(InspectionMedia).filter(
         InspectionMedia.client_uuid == media_data.client_uuid
     ).first()
     if existing:
         return InspectionMediaResponse.model_validate(existing).model_dump()
 
-    # Decode base64 and save file
+    # Decode base64
     try:
-        # Strip data URI prefix if present (e.g., "data:image/jpeg;base64,")
         file_content = media_data.file_data
         if ";base64," in file_content:
             file_content = file_content.split(";base64,")[1]
@@ -218,7 +257,6 @@ def upload_inspection_media(
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid base64 file data")
 
-    # Save to local uploads directory (replace with Cloudinary/S3 in production)
     upload_dir = os.path.join("uploads", "inspections", str(inspection_id))
     os.makedirs(upload_dir, exist_ok=True)
 
@@ -245,13 +283,16 @@ def upload_inspection_media(
     return InspectionMediaResponse.model_validate(media).model_dump()
 
 
-# === 3. GET /api/inspections/ - List inspections ===
+# ============================================
+# 3. GET /api/inspections/ - List inspections
+# ============================================
 
 @router.get("/")
 def list_inspections(
     property_id: Optional[uuid_module.UUID] = None,
     status_filter: Optional[str] = None,
     type_filter: Optional[str] = None,
+    is_external: Optional[bool] = None,
     page: int = 1,
     size: int = 20,
     db: Session = Depends(get_db),
@@ -269,14 +310,11 @@ def list_inspections(
 
     # Role-based filtering
     if current_user.role == UserRole.CARETAKER:
-        # Caretakers see only their own inspections
         query = query.filter(Inspection.performed_by_id == current_user.id)
     elif current_user.role == UserRole.OWNER:
-        # Owners see all inspections for their properties
         owner_property_ids = get_user_accessible_property_ids(db, current_user)
         query = query.filter(Inspection.property_id.in_(owner_property_ids))
     elif current_user.role == UserRole.AGENT:
-        # Agents see own inspections + caretaker inspections for managed properties
         agent_property_ids = get_user_accessible_property_ids(db, current_user)
         query = query.filter(
             and_(
@@ -287,20 +325,18 @@ def list_inspections(
                 )
             )
         )
-    # Admin sees everything (no filter)
 
-    # Apply query filters
+    # Apply filters
     if property_id:
         query = query.filter(Inspection.property_id == property_id)
     if status_filter:
         query = query.filter(Inspection.status == status_filter)
     if type_filter:
         query = query.filter(Inspection.inspection_type == type_filter)
+    if is_external is not None:
+        query = query.filter(Inspection.is_external == is_external)
 
-    # Get total count
     total = query.count()
-
-    # Pagination
     size = min(size, 100)
     offset = (page - 1) * size
     inspections = query.order_by(desc(Inspection.created_at)).offset(offset).limit(size).all()
@@ -316,7 +352,9 @@ def list_inspections(
     }
 
 
-# === 4. GET /api/inspections/{id}/ - Get detail ===
+# ============================================
+# 4. GET /api/inspections/{id}/ - Get detail
+# ============================================
 
 @router.get("/{inspection_id}/")
 def get_inspection_detail(
@@ -324,7 +362,7 @@ def get_inspection_detail(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Get full inspection detail with items, media, and meter readings."""
+    """Get full inspection detail with items, media, meter readings, signatures."""
     inspection = db.query(Inspection).options(
         joinedload(Inspection.property),
         joinedload(Inspection.unit),
@@ -332,6 +370,7 @@ def get_inspection_detail(
         joinedload(Inspection.items),
         joinedload(Inspection.media),
         joinedload(Inspection.meter_readings),
+        joinedload(Inspection.signatures),
     ).filter(Inspection.id == inspection_id).first()
 
     if not inspection:
@@ -361,6 +400,10 @@ def get_inspection_detail(
     response["gps_lng"] = inspection.gps_lng
     response["device_id"] = inspection.device_id
     response["offline_created_at"] = inspection.offline_created_at
+    response["template_id"] = inspection.template_id
+    response["inspector_credentials"] = inspection.inspector_credentials
+    response["inspector_company"] = inspection.inspector_company
+    response["report_url"] = inspection.report_url
     response["items"] = [
         InspectionItemResponse.model_validate(i).model_dump() for i in inspection.items
     ]
@@ -370,11 +413,16 @@ def get_inspection_detail(
     response["meter_readings"] = [
         InspectionMeterReadingResponse.model_validate(r).model_dump() for r in inspection.meter_readings
     ]
+    response["signatures"] = [
+        InspectionSignatureResponse.model_validate(s).model_dump() for s in inspection.signatures
+    ]
 
     return response
 
 
-# === 5. PATCH /api/inspections/{id}/review/ - Mark reviewed ===
+# ============================================
+# 5. PATCH /api/inspections/{id}/review/
+# ============================================
 
 @router.patch("/{inspection_id}/review/")
 def review_inspection(
@@ -383,7 +431,7 @@ def review_inspection(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Mark an inspection as reviewed. Only owner/agent can call."""
+    """Mark an inspection as reviewed."""
     if current_user.role not in [UserRole.OWNER, UserRole.AGENT, UserRole.ADMIN]:
         raise HTTPException(status_code=403, detail="Only owners and agents can review inspections")
 
@@ -399,7 +447,6 @@ def review_inspection(
 
     inspection.status = InspectionStatus.REVIEWED.value
     if review_data.notes:
-        # Append review notes
         existing_notes = inspection.notes or ""
         inspection.notes = f"{existing_notes}\n[Review] {review_data.notes}".strip()
     inspection.updated_at = datetime.utcnow()
@@ -410,7 +457,9 @@ def review_inspection(
     return {"success": True, "status": inspection.status, "id": str(inspection.id)}
 
 
-# === 6. PATCH /api/inspections/{id}/lock/ - Lock inspection ===
+# ============================================
+# 6. PATCH /api/inspections/{id}/lock/
+# ============================================
 
 @router.patch("/{inspection_id}/lock/")
 def lock_inspection(
@@ -418,7 +467,7 @@ def lock_inspection(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Lock an inspection permanently. Only owner can call."""
+    """Lock an inspection permanently."""
     if current_user.role not in [UserRole.OWNER, UserRole.ADMIN]:
         raise HTTPException(status_code=403, detail="Only owners can lock inspections")
 
@@ -439,3 +488,180 @@ def lock_inspection(
     db.refresh(inspection)
 
     return {"success": True, "status": inspection.status, "id": str(inspection.id)}
+
+
+# ============================================
+# 7. POST /api/inspections/{id}/sign/ - Digital signature
+# ============================================
+
+@router.post("/{inspection_id}/sign/", status_code=status.HTTP_201_CREATED)
+def sign_inspection(
+    inspection_id: uuid_module.UUID,
+    sig_data: InspectionSignatureCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Add a digital signature to an inspection report."""
+    inspection = db.query(Inspection).filter(Inspection.id == inspection_id).first()
+    if not inspection:
+        raise HTTPException(status_code=404, detail="Inspection not found")
+
+    # Get client IP for audit trail
+    client_ip = request.client.host if request.client else None
+
+    signature = InspectionSignature(
+        inspection_id=inspection_id,
+        signer_id=current_user.id,
+        signer_name=sig_data.signer_name,
+        signer_role=sig_data.signer_role,
+        signature_type=sig_data.signature_type,
+        signature_data=sig_data.signature_data,
+        signed_at=datetime.utcnow(),
+        ip_address=sig_data.ip_address or client_ip,
+        device_fingerprint=sig_data.device_fingerprint,
+        gps_lat=sig_data.gps_lat,
+        gps_lng=sig_data.gps_lng,
+    )
+    db.add(signature)
+    db.commit()
+    db.refresh(signature)
+
+    return InspectionSignatureResponse.model_validate(signature).model_dump()
+
+
+# ============================================
+# 8. GET /api/inspections/{id}/signatures/
+# ============================================
+
+@router.get("/{inspection_id}/signatures/")
+def get_inspection_signatures(
+    inspection_id: uuid_module.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get all signatures for an inspection."""
+    inspection = db.query(Inspection).filter(Inspection.id == inspection_id).first()
+    if not inspection:
+        raise HTTPException(status_code=404, detail="Inspection not found")
+
+    signatures = db.query(InspectionSignature).filter(
+        InspectionSignature.inspection_id == inspection_id
+    ).order_by(InspectionSignature.signed_at).all()
+
+    return [InspectionSignatureResponse.model_validate(s).model_dump() for s in signatures]
+
+
+# ============================================
+# TEMPLATE CRUD
+# ============================================
+
+@router.post("/templates/", status_code=status.HTTP_201_CREATED)
+def create_template(
+    template_data: InspectionTemplateCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create an inspection template."""
+    if current_user.role not in [UserRole.OWNER, UserRole.AGENT, UserRole.ADMIN]:
+        raise HTTPException(status_code=403, detail="Only owners and agents can create templates")
+
+    template = InspectionTemplate(
+        owner_id=current_user.id,
+        name=template_data.name,
+        description=template_data.description,
+        inspection_type=template_data.inspection_type,
+        is_external=template_data.is_external or False,
+        categories=template_data.categories,
+        default_items=template_data.default_items,
+        scoring_enabled=template_data.scoring_enabled if template_data.scoring_enabled is not None else True,
+        pass_threshold=template_data.pass_threshold,
+    )
+    db.add(template)
+    db.commit()
+    db.refresh(template)
+
+    return InspectionTemplateResponse.model_validate(template).model_dump()
+
+
+@router.get("/templates/")
+def list_templates(
+    inspection_type: Optional[str] = None,
+    is_external: Optional[bool] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List inspection templates for the current user."""
+    query = db.query(InspectionTemplate).filter(
+        InspectionTemplate.owner_id == current_user.id,
+        InspectionTemplate.is_active == True,
+    )
+    if inspection_type:
+        query = query.filter(InspectionTemplate.inspection_type == inspection_type)
+    if is_external is not None:
+        query = query.filter(InspectionTemplate.is_external == is_external)
+
+    templates = query.order_by(desc(InspectionTemplate.created_at)).all()
+    return [InspectionTemplateResponse.model_validate(t).model_dump() for t in templates]
+
+
+@router.get("/templates/{template_id}/")
+def get_template(
+    template_id: uuid_module.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get a single inspection template."""
+    template = db.query(InspectionTemplate).filter(
+        InspectionTemplate.id == template_id
+    ).first()
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return InspectionTemplateResponse.model_validate(template).model_dump()
+
+
+@router.put("/templates/{template_id}/")
+def update_template(
+    template_id: uuid_module.UUID,
+    template_data: InspectionTemplateUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update an inspection template."""
+    template = db.query(InspectionTemplate).filter(
+        InspectionTemplate.id == template_id,
+        InspectionTemplate.owner_id == current_user.id,
+    ).first()
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    update_fields = template_data.model_dump(exclude_unset=True)
+    for field, value in update_fields.items():
+        setattr(template, field, value)
+    template.updated_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(template)
+
+    return InspectionTemplateResponse.model_validate(template).model_dump()
+
+
+@router.delete("/templates/{template_id}/")
+def delete_template(
+    template_id: uuid_module.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Soft-delete an inspection template."""
+    template = db.query(InspectionTemplate).filter(
+        InspectionTemplate.id == template_id,
+        InspectionTemplate.owner_id == current_user.id,
+    ).first()
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    template.is_active = False
+    template.updated_at = datetime.utcnow()
+    db.commit()
+
+    return {"success": True, "detail": "Template deleted"}
