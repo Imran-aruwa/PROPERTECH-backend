@@ -12,6 +12,7 @@ from app.api.routes.staff_security import router as staff_security_router
 from app.api.routes.staff_gardener import router as staff_gardener_router
 from app.api.routes.admin import router as admin_router
 from app.api.routes.inspections import router as inspections_router
+from app.api.routes.market import router as market_router
 
 __all__ = [
     "auth_router",
@@ -28,5 +29,6 @@ __all__ = [
     "staff_security_router",
     "staff_gardener_router",
     "admin_router",
-    "inspections_router"
+    "inspections_router",
+    "market_router",
 ]

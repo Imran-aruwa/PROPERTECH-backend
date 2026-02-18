@@ -57,6 +57,11 @@ except ImportError:
     ViewingStatus = None
 
 try:
+    from app.models.market import AreaMetrics
+except ImportError:
+    AreaMetrics = None
+
+try:
     from app.models.inspection import (
         Inspection, InspectionItem, InspectionMedia,
         InspectionMeterReading, InspectionStatus, InspectionType,

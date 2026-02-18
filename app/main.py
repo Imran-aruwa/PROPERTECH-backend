@@ -30,7 +30,8 @@ from app.api.routes import (
     staff_security_router,
     staff_gardener_router,
     admin_router,
-    inspections_router
+    inspections_router,
+    market_router,
 )
 from app.core.config import settings
 from app.database import test_connection, init_db, close_db_connection
@@ -141,6 +142,7 @@ app.include_router(staff_security_router, prefix="/api/staff/security", tags=["S
 app.include_router(staff_gardener_router, prefix="/api/staff/gardener", tags=["Gardener Staff"])
 app.include_router(admin_router, prefix="/api/admin", tags=["Admin"])
 app.include_router(inspections_router, prefix="/api/inspections", tags=["Inspections"])
+app.include_router(market_router, prefix="/api/market", tags=["Market Intelligence"])
 
 # V1 API compatibility endpoints
 app.include_router(v1_payments_router, prefix="/api/v1", tags=["V1 API"])
@@ -330,6 +332,13 @@ async def startup_event():
                     logger.info("[OK] Payment columns added successfully!")
                 else:
                     logger.info("[OK] Payment schema is correct")
+
+                # Ensure properties.area column exists (Market Intelligence feature)
+                db.execute(text(
+                    "ALTER TABLE properties ADD COLUMN IF NOT EXISTS area VARCHAR(100)"
+                ))
+                db.commit()
+                logger.info("[OK] Properties.area column ensured")
             else:
                 logger.info("[INFO] Non-PostgreSQL database, skipping schema check")
         except Exception as schema_error:

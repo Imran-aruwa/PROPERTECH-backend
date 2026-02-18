@@ -1,4 +1,11 @@
-from app.services.auth_service import *
-from app.services.paystack_service import *
+try:
+    from app.services.auth_service import *
+except Exception:
+    pass
 
-__all__ = ["auth_service", "paystack_service"]
+try:
+    from app.services.paystack_service import *
+except Exception:
+    pass
+
+__all__ = ["auth_service", "paystack_service", "market_service"]

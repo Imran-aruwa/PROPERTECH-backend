@@ -146,6 +146,7 @@ def property_with_stats(prop: Property) -> dict:
         "user_id": prop.user_id,
         "name": prop.name,
         "address": prop.address,
+        "area": prop.area,
         "city": prop.city,
         "state": prop.state,
         "postal_code": prop.postal_code,

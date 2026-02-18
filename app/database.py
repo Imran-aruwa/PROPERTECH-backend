@@ -94,6 +94,7 @@ def init_db():
         from app.models.incident import Incident
         from app.models.equipment import Equipment
         from app.models.task import Task
+        from app.models.market import AreaMetrics
 
         print(f"[INFO] Creating tables for {len(Base.metadata.tables)} models...")
         Base.metadata.create_all(bind=engine)

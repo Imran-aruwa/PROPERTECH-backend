@@ -32,6 +32,7 @@ class Property(Base):
 
     name = Column(String, nullable=False)
     address = Column(String, nullable=False)
+    area = Column(String(100), nullable=True, index=True)  # Neighbourhood/area name
     city = Column(String, nullable=True)
     state = Column(String, nullable=True)
     postal_code = Column(String, nullable=True)

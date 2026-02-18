@@ -70,6 +70,7 @@ class UnitResponse(UnitBase):
 class PropertyBase(BaseModel):
     name: str
     address: str
+    area: Optional[str] = None  # Neighbourhood/area name (e.g. "Westlands", "Kilimani")
     city: Optional[str] = None
     state: Optional[str] = None
     postal_code: Optional[str] = None
@@ -100,6 +101,7 @@ class PropertyCreate(PropertyBase):
 class PropertyUpdate(BaseModel):
     name: Optional[str] = None
     address: Optional[str] = None
+    area: Optional[str] = None
     city: Optional[str] = None
     state: Optional[str] = None
     postal_code: Optional[str] = None
