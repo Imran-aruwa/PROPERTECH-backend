@@ -32,6 +32,7 @@ from app.api.routes import (
     admin_router,
     inspections_router,
     market_router,
+    workflows_router,
 )
 from app.core.config import settings
 from app.database import test_connection, init_db, close_db_connection
@@ -143,6 +144,7 @@ app.include_router(staff_gardener_router, prefix="/api/staff/gardener", tags=["G
 app.include_router(admin_router, prefix="/api/admin", tags=["Admin"])
 app.include_router(inspections_router, prefix="/api/inspections", tags=["Inspections"])
 app.include_router(market_router, prefix="/api/market", tags=["Market Intelligence"])
+app.include_router(workflows_router, prefix="/api/workflows", tags=["Workflows"])
 
 # V1 API compatibility endpoints
 app.include_router(v1_payments_router, prefix="/api/v1", tags=["V1 API"])
@@ -339,6 +341,46 @@ async def startup_event():
                 ))
                 db.commit()
                 logger.info("[OK] Properties.area column ensured")
+
+                # Ensure workflow automation tables exist (create_all handles this,
+                # but we also ensure enum types exist for PostgreSQL)
+                try:
+                    db.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE triggerevent AS ENUM (
+                                'rent_overdue', 'lease_expiring_soon',
+                                'maintenance_request_opened', 'maintenance_request_resolved',
+                                'unit_vacated', 'tenant_onboarded'
+                            );
+                        EXCEPTION WHEN duplicate_object THEN null;
+                        END $$;
+                    """))
+                    db.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE actiontype AS ENUM (
+                                'send_notification', 'send_email',
+                                'create_task', 'update_field', 'escalate'
+                            );
+                        EXCEPTION WHEN duplicate_object THEN null;
+                        END $$;
+                    """))
+                    db.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE workflowstatus AS ENUM ('active', 'inactive', 'draft');
+                        EXCEPTION WHEN duplicate_object THEN null;
+                        END $$;
+                    """))
+                    db.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE workflowlogstatus AS ENUM ('success', 'failed', 'skipped');
+                        EXCEPTION WHEN duplicate_object THEN null;
+                        END $$;
+                    """))
+                    db.commit()
+                    logger.info("[OK] Workflow enum types ensured")
+                except Exception as wf_enum_err:
+                    logger.warning(f"[WARN] Workflow enum creation: {wf_enum_err}")
+                    db.rollback()
             else:
                 logger.info("[INFO] Non-PostgreSQL database, skipping schema check")
         except Exception as schema_error:

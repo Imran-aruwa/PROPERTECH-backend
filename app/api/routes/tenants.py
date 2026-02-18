@@ -195,6 +195,30 @@ def create_tenant(
     db.refresh(tenant)
     logger.info(f"[CREATE_TENANT] Tenant created: {tenant.id}, unit status: {unit.status if unit else 'N/A'}")
 
+    # Fire tenant_onboarded workflow event
+    try:
+        from app.services.workflow_engine import WorkflowEngine
+        from app.models.workflow import TriggerEvent
+        engine = WorkflowEngine(db)
+        engine.fire(
+            TriggerEvent.TENANT_ONBOARDED,
+            {
+                "tenant_id": str(tenant.id),
+                "tenant_name": tenant.full_name,
+                "tenant_email": tenant.email,
+                "unit_id": str(tenant.unit_id) if tenant.unit_id else "",
+                "unit_number": unit.unit_number if unit else "",
+                "property_id": str(tenant.property_id) if tenant.property_id else "",
+                "rent_amount": tenant.rent_amount,
+                "lease_start": tenant.lease_start.strftime("%Y-%m-%d") if tenant.lease_start else "",
+                "owner_id": str(current_user.id),
+                "owner_email": current_user.email,
+            },
+            owner_id=current_user.id,
+        )
+    except Exception as wf_err:
+        logger.warning(f"[WORKFLOW] tenant_onboarded event failed: {wf_err}")
+
     return {
         "success": True,
         "id": str(tenant.id),
@@ -371,9 +395,30 @@ def delete_tenant(
     unit = db.query(Unit).filter(Unit.id == tenant.unit_id).first()
     if unit:
         unit.status = "vacant"
-    
+
+    # Capture context before deletion
+    _vacated_context = {
+        "tenant_id": str(tenant.id),
+        "tenant_name": tenant.full_name,
+        "unit_id": str(tenant.unit_id) if tenant.unit_id else "",
+        "unit_number": unit.unit_number if unit else "",
+        "property_id": str(tenant.property_id) if tenant.property_id else "",
+        "owner_id": str(current_user.id),
+        "owner_email": current_user.email,
+    }
+    _owner_id = current_user.id
+
     db.delete(tenant)
     db.commit()
+
+    # Fire unit_vacated workflow event
+    try:
+        from app.services.workflow_engine import WorkflowEngine
+        from app.models.workflow import TriggerEvent
+        engine = WorkflowEngine(db)
+        engine.fire(TriggerEvent.UNIT_VACATED, _vacated_context, owner_id=_owner_id)
+    except Exception as wf_err:
+        logger.warning(f"[WORKFLOW] unit_vacated event failed: {wf_err}")
 
 
 # ==================== TENANT PAYMENTS ====================

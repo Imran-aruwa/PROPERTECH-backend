@@ -618,6 +618,29 @@ def create_maintenance_request(
     db.commit()
     db.refresh(maintenance)
 
+    # Fire maintenance_request_opened workflow event
+    try:
+        from app.services.workflow_engine import WorkflowEngine
+        from app.models.workflow import TriggerEvent
+        engine = WorkflowEngine(db)
+        engine.fire(
+            TriggerEvent.MAINTENANCE_REQUEST_OPENED,
+            {
+                "maintenance_id": str(maintenance.id),
+                "title": maintenance.title,
+                "description": maintenance.description or "",
+                "priority": maintenance_data.priority,
+                "unit_id": maintenance_data.unit_id or "",
+                "caretaker_id": str(current_user.id),
+                "caretaker_name": current_user.full_name or current_user.email,
+            },
+        )
+    except Exception as wf_err:
+        import logging as _log
+        _log.getLogger(__name__).warning(
+            f"[WORKFLOW] maintenance_request_opened event failed: {wf_err}"
+        )
+
     return {
         "success": True,
         "message": "Maintenance request created successfully",
@@ -641,13 +664,37 @@ def update_maintenance_status(
     if not maintenance:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
     
+    prev_status = maintenance.status
     maintenance.status = status
     if notes:
         maintenance.notes = notes
-    
+
     db.commit()
     db.refresh(maintenance)
-    
+
+    # Fire maintenance_request_resolved event when status transitions to COMPLETED
+    if status == MaintenanceStatus.COMPLETED and prev_status != MaintenanceStatus.COMPLETED:
+        try:
+            from app.services.workflow_engine import WorkflowEngine
+            from app.models.workflow import TriggerEvent
+            engine = WorkflowEngine(db)
+            engine.fire(
+                TriggerEvent.MAINTENANCE_REQUEST_RESOLVED,
+                {
+                    "maintenance_id": str(maintenance.id),
+                    "title": maintenance.title or "",
+                    "unit_id": str(maintenance.unit_id) if maintenance.unit_id else "",
+                    "resolved_by": str(current_user.id),
+                    "resolved_by_name": current_user.full_name or current_user.email,
+                    "notes": notes or "",
+                },
+            )
+        except Exception as wf_err:
+            import logging as _log
+            _log.getLogger(__name__).warning(
+                f"[WORKFLOW] maintenance_request_resolved event failed: {wf_err}"
+            )
+
     return {
         "success": True,
         "id": maintenance.id,

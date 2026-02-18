@@ -62,6 +62,13 @@ except ImportError:
     AreaMetrics = None
 
 try:
+    from app.models.workflow import Workflow, WorkflowAction, WorkflowLog
+except ImportError:
+    Workflow = None
+    WorkflowAction = None
+    WorkflowLog = None
+
+try:
     from app.models.inspection import (
         Inspection, InspectionItem, InspectionMedia,
         InspectionMeterReading, InspectionStatus, InspectionType,
