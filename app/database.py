@@ -95,6 +95,7 @@ def init_db():
         from app.models.equipment import Equipment
         from app.models.task import Task
         from app.models.market import AreaMetrics
+        from app.models.accounting import AccountingEntry, TaxRecord, WithholdingTaxEntry
         from app.models.lease import Lease, LeaseClause, LeaseSignature
 
         print(f"[INFO] Creating tables for {len(Base.metadata.tables)} models...")

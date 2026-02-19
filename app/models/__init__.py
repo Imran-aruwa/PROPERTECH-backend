@@ -69,6 +69,13 @@ except ImportError:
     WorkflowLog = None
 
 try:
+    from app.models.accounting import AccountingEntry, TaxRecord, WithholdingTaxEntry
+except ImportError:
+    AccountingEntry = None
+    TaxRecord = None
+    WithholdingTaxEntry = None
+
+try:
     from app.models.lease import Lease, LeaseClause, LeaseSignature
 except ImportError:
     Lease = None

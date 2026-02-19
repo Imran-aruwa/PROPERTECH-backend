@@ -34,6 +34,7 @@ from app.api.routes import (
     market_router,
     workflows_router,
     leases_router,
+    accounting_router,
 )
 from app.core.config import settings
 from app.database import test_connection, init_db, close_db_connection
@@ -147,6 +148,7 @@ app.include_router(inspections_router, prefix="/api/inspections", tags=["Inspect
 app.include_router(market_router, prefix="/api/market", tags=["Market Intelligence"])
 app.include_router(workflows_router, prefix="/api/workflows", tags=["Workflows"])
 app.include_router(leases_router, prefix="/api/leases", tags=["Leases"])
+app.include_router(accounting_router, prefix="/api/accounting", tags=["Accounting"])
 
 # V1 API compatibility endpoints
 app.include_router(v1_payments_router, prefix="/api/v1", tags=["V1 API"])
@@ -406,6 +408,40 @@ async def startup_event():
                     logger.info("[OK] Lease enum types ensured")
                 except Exception as lease_enum_err:
                     logger.warning(f"[WARN] Lease enum creation: {lease_enum_err}")
+                    db.rollback()
+
+                # Accounting enum types
+                try:
+                    db.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE entrytype AS ENUM ('income', 'expense');
+                        EXCEPTION WHEN duplicate_object THEN null;
+                        END $$;
+                    """))
+                    db.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE entrycategory AS ENUM (
+                                'rental_income', 'deposit_received', 'late_fee',
+                                'service_charge', 'other_income',
+                                'mortgage_interest', 'repairs_maintenance',
+                                'property_management_fees', 'insurance',
+                                'land_rates', 'ground_rent', 'legal_fees',
+                                'advertising', 'depreciation', 'utilities',
+                                'caretaker_salary', 'security', 'other'
+                            );
+                        EXCEPTION WHEN duplicate_object THEN null;
+                        END $$;
+                    """))
+                    db.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE taxrecordstatus AS ENUM ('draft', 'filed', 'paid');
+                        EXCEPTION WHEN duplicate_object THEN null;
+                        END $$;
+                    """))
+                    db.commit()
+                    logger.info("[OK] Accounting enum types ensured")
+                except Exception as acc_enum_err:
+                    logger.warning(f"[WARN] Accounting enum creation: {acc_enum_err}")
                     db.rollback()
             else:
                 logger.info("[INFO] Non-PostgreSQL database, skipping schema check")
