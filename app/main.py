@@ -33,6 +33,7 @@ from app.api.routes import (
     inspections_router,
     market_router,
     workflows_router,
+    leases_router,
 )
 from app.core.config import settings
 from app.database import test_connection, init_db, close_db_connection
@@ -145,6 +146,7 @@ app.include_router(admin_router, prefix="/api/admin", tags=["Admin"])
 app.include_router(inspections_router, prefix="/api/inspections", tags=["Inspections"])
 app.include_router(market_router, prefix="/api/market", tags=["Market Intelligence"])
 app.include_router(workflows_router, prefix="/api/workflows", tags=["Workflows"])
+app.include_router(leases_router, prefix="/api/leases", tags=["Leases"])
 
 # V1 API compatibility endpoints
 app.include_router(v1_payments_router, prefix="/api/v1", tags=["V1 API"])
@@ -380,6 +382,30 @@ async def startup_event():
                     logger.info("[OK] Workflow enum types ensured")
                 except Exception as wf_enum_err:
                     logger.warning(f"[WARN] Workflow enum creation: {wf_enum_err}")
+                    db.rollback()
+
+                # Ensure lease enum types and tables exist (Digital Lease Management)
+                try:
+                    db.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE leasestatus AS ENUM (
+                                'draft', 'sent', 'signed', 'active', 'expired', 'terminated'
+                            );
+                        EXCEPTION WHEN duplicate_object THEN null;
+                        END $$;
+                    """))
+                    db.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE paymentcycle AS ENUM (
+                                'monthly', 'quarterly', 'annually'
+                            );
+                        EXCEPTION WHEN duplicate_object THEN null;
+                        END $$;
+                    """))
+                    db.commit()
+                    logger.info("[OK] Lease enum types ensured")
+                except Exception as lease_enum_err:
+                    logger.warning(f"[WARN] Lease enum creation: {lease_enum_err}")
                     db.rollback()
             else:
                 logger.info("[INFO] Non-PostgreSQL database, skipping schema check")

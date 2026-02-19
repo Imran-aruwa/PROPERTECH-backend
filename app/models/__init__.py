@@ -69,6 +69,13 @@ except ImportError:
     WorkflowLog = None
 
 try:
+    from app.models.lease import Lease, LeaseClause, LeaseSignature
+except ImportError:
+    Lease = None
+    LeaseClause = None
+    LeaseSignature = None
+
+try:
     from app.models.inspection import (
         Inspection, InspectionItem, InspectionMedia,
         InspectionMeterReading, InspectionStatus, InspectionType,

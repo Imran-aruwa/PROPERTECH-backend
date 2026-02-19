@@ -14,6 +14,7 @@ from app.api.routes.admin import router as admin_router
 from app.api.routes.inspections import router as inspections_router
 from app.api.routes.market import router as market_router
 from app.api.routes.workflows import router as workflows_router
+from app.api.routes.leases import router as leases_router
 
 __all__ = [
     "auth_router",
@@ -33,4 +34,5 @@ __all__ = [
     "inspections_router",
     "market_router",
     "workflows_router",
+    "leases_router",
 ]

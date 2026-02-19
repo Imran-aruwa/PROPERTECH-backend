@@ -326,7 +326,7 @@ def get_tenant_lease(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get tenant lease information"""
+    """Get tenant lease information — prefers a real Lease record, falls back to tenant fields."""
     if current_user.role != UserRole.TENANT:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
@@ -337,9 +337,43 @@ def get_tenant_lease(
     unit = db.query(Unit).filter(Unit.id == tenant.unit_id).first()
     prop = db.query(Property).filter(Property.id == unit.property_id).first() if unit else None
 
-    return {
-        "success": True,
-        "lease": {
+    # Try to find a real Lease record for this tenant
+    lease_data = None
+    try:
+        from app.models.lease import Lease, LeaseStatus
+        # Find the most recent non-terminated lease linked to this tenant
+        real_lease = (
+            db.query(Lease)
+            .filter(
+                Lease.tenant_id == tenant.id,
+                Lease.status.notin_([LeaseStatus.TERMINATED]),
+            )
+            .order_by(Lease.created_at.desc())
+            .first()
+        )
+        if real_lease:
+            lease_data = {
+                "id": str(real_lease.id),
+                "tenant_name": real_lease.tenant_name or tenant.full_name,
+                "unit_number": unit.unit_number if unit else None,
+                "property_name": prop.name if prop else None,
+                "property_address": prop.address if prop else None,
+                "rent_amount": float(real_lease.rent_amount),
+                "deposit_amount": float(real_lease.deposit_amount),
+                "lease_start": real_lease.start_date.isoformat() if real_lease.start_date else None,
+                "lease_end": real_lease.end_date.isoformat() if real_lease.end_date else None,
+                "lease_duration_months": tenant.lease_duration_months,
+                "status": real_lease.status.value if hasattr(real_lease.status, "value") else str(real_lease.status),
+                "move_in_date": tenant.move_in_date.isoformat() if tenant.move_in_date else None,
+                "document_url": real_lease.pdf_url or tenant.lease_agreement_url,
+                "payment_cycle": real_lease.payment_cycle.value if hasattr(real_lease.payment_cycle, "value") else str(real_lease.payment_cycle),
+                "signed_at": real_lease.signed_at.isoformat() if real_lease.signed_at else None,
+            }
+    except Exception:
+        pass  # Fall through to legacy response
+
+    if lease_data is None:
+        lease_data = {
             "tenant_name": tenant.full_name,
             "unit_number": unit.unit_number if unit else None,
             "property_name": prop.name if prop else None,
@@ -351,6 +385,7 @@ def get_tenant_lease(
             "lease_duration_months": tenant.lease_duration_months,
             "status": tenant.status,
             "move_in_date": tenant.move_in_date.isoformat() if tenant.move_in_date else None,
-            "document_url": tenant.lease_agreement_url
+            "document_url": tenant.lease_agreement_url,
         }
-    }
+
+    return {"success": True, "lease": lease_data}
