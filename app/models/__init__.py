@@ -99,6 +99,18 @@ except ImportError:
     InspectionSignature = None
     SeverityLevel = None
 
+try:
+    from app.models.listing import (
+        VacancyListing, ListingSyndication, ListingLead, ListingAnalytics,
+        ListingStatus, SyndicationPlatform, SyndicationStatus, LeadStatus,
+        AnalyticsEventType,
+    )
+except ImportError:
+    VacancyListing = None
+    ListingSyndication = None
+    ListingLead = None
+    ListingAnalytics = None
+
 __all__ = [
     "User",
     "UserRole",

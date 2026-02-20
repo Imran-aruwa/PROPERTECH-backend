@@ -35,6 +35,7 @@ from app.api.routes import (
     workflows_router,
     leases_router,
     accounting_router,
+    listings_router,
 )
 from app.core.config import settings
 from app.database import test_connection, init_db, close_db_connection
@@ -149,6 +150,7 @@ app.include_router(market_router, prefix="/api/market", tags=["Market Intelligen
 app.include_router(workflows_router, prefix="/api/workflows", tags=["Workflows"])
 app.include_router(leases_router, prefix="/api/leases", tags=["Leases"])
 app.include_router(accounting_router, prefix="/api/accounting", tags=["Accounting"])
+app.include_router(listings_router, prefix="/api/listings", tags=["Listings"])
 
 # V1 API compatibility endpoints
 app.include_router(v1_payments_router, prefix="/api/v1", tags=["V1 API"])
@@ -442,6 +444,53 @@ async def startup_event():
                     logger.info("[OK] Accounting enum types ensured")
                 except Exception as acc_enum_err:
                     logger.warning(f"[WARN] Accounting enum creation: {acc_enum_err}")
+                    db.rollback()
+
+                # Vacancy Listing Syndication enum types
+                try:
+                    db.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE listingstatus AS ENUM ('draft', 'active', 'paused', 'filled');
+                        EXCEPTION WHEN duplicate_object THEN null;
+                        END $$;
+                    """))
+                    db.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE syndicationplatform AS ENUM (
+                                'whatsapp', 'facebook', 'twitter',
+                                'property24', 'buyrentkenya', 'jiji', 'direct_link'
+                            );
+                        EXCEPTION WHEN duplicate_object THEN null;
+                        END $$;
+                    """))
+                    db.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE syndicationstatus AS ENUM (
+                                'pending', 'published', 'failed', 'expired'
+                            );
+                        EXCEPTION WHEN duplicate_object THEN null;
+                        END $$;
+                    """))
+                    db.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE leadstatus_listing AS ENUM (
+                                'new', 'contacted', 'viewing_scheduled', 'approved', 'rejected'
+                            );
+                        EXCEPTION WHEN duplicate_object THEN null;
+                        END $$;
+                    """))
+                    db.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE analyticseventtype AS ENUM (
+                                'view', 'inquiry', 'share', 'click'
+                            );
+                        EXCEPTION WHEN duplicate_object THEN null;
+                        END $$;
+                    """))
+                    db.commit()
+                    logger.info("[OK] Listing syndication enum types ensured")
+                except Exception as listing_enum_err:
+                    logger.warning(f"[WARN] Listing enum creation: {listing_enum_err}")
                     db.rollback()
             else:
                 logger.info("[INFO] Non-PostgreSQL database, skipping schema check")
