@@ -557,6 +557,31 @@ async def startup_event():
                 except Exception as listing_enum_err:
                     logger.warning(f"[WARN] Listing enum creation: {listing_enum_err}")
                     db.rollback()
+
+                # Inspection schema fixes — add new columns added by universal engine migration
+                try:
+                    db.execute(text("ALTER TABLE inspections ADD COLUMN IF NOT EXISTS is_external BOOLEAN DEFAULT false"))
+                    db.execute(text("ALTER TABLE inspections ADD COLUMN IF NOT EXISTS template_id UUID"))
+                    db.execute(text("ALTER TABLE inspections ADD COLUMN IF NOT EXISTS overall_score FLOAT"))
+                    db.execute(text("ALTER TABLE inspections ADD COLUMN IF NOT EXISTS pass_fail VARCHAR(10)"))
+                    db.execute(text("ALTER TABLE inspections ADD COLUMN IF NOT EXISTS inspector_name VARCHAR(255)"))
+                    db.execute(text("ALTER TABLE inspections ADD COLUMN IF NOT EXISTS inspector_credentials VARCHAR(500)"))
+                    db.execute(text("ALTER TABLE inspections ADD COLUMN IF NOT EXISTS inspector_company VARCHAR(255)"))
+                    db.execute(text("ALTER TABLE inspections ADD COLUMN IF NOT EXISTS report_url VARCHAR(500)"))
+                    db.execute(text("ALTER TABLE inspection_items ADD COLUMN IF NOT EXISTS score INTEGER"))
+                    db.execute(text("ALTER TABLE inspection_items ADD COLUMN IF NOT EXISTS severity VARCHAR(10)"))
+                    db.execute(text("ALTER TABLE inspection_items ADD COLUMN IF NOT EXISTS pass_fail VARCHAR(10)"))
+                    db.execute(text("ALTER TABLE inspection_items ADD COLUMN IF NOT EXISTS requires_followup BOOLEAN DEFAULT false"))
+                    db.execute(text("ALTER TABLE inspection_items ADD COLUMN IF NOT EXISTS photo_required BOOLEAN DEFAULT false"))
+                    # Drop restrictive check constraints added by old migration (block new types/categories)
+                    db.execute(text("ALTER TABLE inspections DROP CONSTRAINT IF EXISTS ck_inspections_type"))
+                    db.execute(text("ALTER TABLE inspection_items DROP CONSTRAINT IF EXISTS ck_items_category"))
+                    db.commit()
+                    logger.info("[OK] Inspection schema fixes applied")
+                except Exception as insp_err:
+                    logger.warning(f"[WARN] Inspection schema fix: {insp_err}")
+                    db.rollback()
+
             else:
                 logger.info("[INFO] Non-PostgreSQL database, skipping schema check")
         except Exception as schema_error:

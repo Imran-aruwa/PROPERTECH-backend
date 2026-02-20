@@ -34,38 +34,13 @@ def require_premium(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> User:
-    """
-    Require an active Professional or Enterprise subscription.
-    Admin users bypass this check.
-    Raises HTTP 403 with a structured error body so the frontend can show an
-    upgrade CTA rather than a generic error.
-    """
-    if current_user.role == UserRole.ADMIN:
+    """Allow all authenticated owners and admins (subscription gate removed)."""
+    if current_user.role in (UserRole.ADMIN, UserRole.OWNER):
         return current_user
-
-    active_sub = (
-        db.query(Subscription)
-        .filter(
-            Subscription.user_id == current_user.id,
-            Subscription.status == SubscriptionStatus.ACTIVE,
-            Subscription.plan.in_(["professional", "enterprise"]),
-        )
-        .first()
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Access restricted to property owners.",
     )
-
-    if not active_sub:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "error": "premium_required",
-                "message": (
-                    "Market Intelligence is a premium feature. "
-                    "Upgrade to Professional or Enterprise to unlock it."
-                ),
-                "upgrade_url": "/dashboard/settings/billing",
-            },
-        )
-    return current_user
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────

@@ -182,31 +182,13 @@ def require_premium(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> User:
-    """Require Professional or Enterprise subscription. Admins bypass."""
-    if current_user.role == UserRole.ADMIN:
+    """Allow all authenticated owners and admins (subscription gate removed)."""
+    if current_user.role in (UserRole.ADMIN, UserRole.OWNER):
         return current_user
-    active_sub = (
-        db.query(Subscription)
-        .filter(
-            Subscription.user_id == current_user.id,
-            Subscription.status == SubscriptionStatus.ACTIVE,
-            Subscription.plan.in_(["professional", "enterprise"]),
-        )
-        .first()
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Access restricted to property owners.",
     )
-    if not active_sub:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "error": "premium_required",
-                "message": (
-                    "Mpesa Payment Intelligence is a premium feature. "
-                    "Upgrade to Professional or Enterprise to unlock it."
-                ),
-                "upgrade_url": "/owner/subscription",
-            },
-        )
-    return current_user
 
 
 def _get_config_or_404(owner_id: uuid.UUID, db: Session) -> MpesaConfig:

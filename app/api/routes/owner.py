@@ -315,11 +315,14 @@ def get_owner_dashboard(
         .all()
 
     for p in recent_payments:
-        recent_activities.append({
-            "type": "payment",
-            "description": f"Payment of KES {p.amount:,.0f} - {p.status.value}",
-            "timestamp": p.created_at.isoformat() if p.created_at else None
-        })
+        try:
+            recent_activities.append({
+                "type": "payment",
+                "description": f"Payment of KES {p.amount:,.0f} - {getattr(p.status, 'value', str(p.status))}",
+                "timestamp": p.created_at.isoformat() if p.created_at else None
+            })
+        except Exception:
+            pass
 
     recent_maintenance = db.query(MaintenanceRequest)\
         .order_by(desc(MaintenanceRequest.created_at))\
@@ -327,11 +330,14 @@ def get_owner_dashboard(
         .all()
 
     for m in recent_maintenance:
-        recent_activities.append({
-            "type": "maintenance",
-            "description": f"Maintenance: {m.title} - {m.status.value}",
-            "timestamp": m.created_at.isoformat() if m.created_at else None
-        })
+        try:
+            recent_activities.append({
+                "type": "maintenance",
+                "description": f"Maintenance: {m.title} - {getattr(m.status, 'value', str(m.status))}",
+                "timestamp": m.created_at.isoformat() if m.created_at else None
+            })
+        except Exception:
+            pass
 
     # Sort by timestamp
     recent_activities.sort(key=lambda x: x["timestamp"] or "", reverse=True)
