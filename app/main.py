@@ -350,6 +350,24 @@ async def startup_event():
                 db.commit()
                 logger.info("[OK] Properties.area column ensured")
 
+                # Ensure all unit columns exist (added in later iterations of the model)
+                try:
+                    db.execute(text("ALTER TABLE units ADD COLUMN IF NOT EXISTS has_master_bedroom BOOLEAN DEFAULT false"))
+                    db.execute(text("ALTER TABLE units ADD COLUMN IF NOT EXISTS has_servant_quarters BOOLEAN DEFAULT false"))
+                    db.execute(text("ALTER TABLE units ADD COLUMN IF NOT EXISTS sq_bathrooms INTEGER DEFAULT 0"))
+                    db.execute(text("ALTER TABLE units ADD COLUMN IF NOT EXISTS occupancy_type VARCHAR(50) DEFAULT 'available'"))
+                    db.execute(text("ALTER TABLE units ADD COLUMN IF NOT EXISTS description TEXT"))
+                    db.execute(text("ALTER TABLE units ADD COLUMN IF NOT EXISTS toilets INTEGER DEFAULT 1"))
+                    db.execute(text("ALTER TABLE units ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP"))
+                    db.execute(text("ALTER TABLE properties ADD COLUMN IF NOT EXISTS photos TEXT"))
+                    db.execute(text("ALTER TABLE properties ADD COLUMN IF NOT EXISTS total_units INTEGER DEFAULT 0"))
+                    db.execute(text("ALTER TABLE properties ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP"))
+                    db.commit()
+                    logger.info("[OK] Units/properties extra columns ensured")
+                except Exception as unit_col_err:
+                    logger.warning(f"[WARN] Units/properties column fix: {unit_col_err}")
+                    db.rollback()
+
                 # Ensure workflow automation tables exist (create_all handles this,
                 # but we also ensure enum types exist for PostgreSQL)
                 try:
