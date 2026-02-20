@@ -111,6 +111,18 @@ except ImportError:
     ListingLead = None
     ListingAnalytics = None
 
+try:
+    from app.models.mpesa import (
+        MpesaConfig, MpesaTransaction, MpesaReminder,
+        MpesaReminderRule, MpesaReconciliationLog,
+    )
+except ImportError:
+    MpesaConfig = None
+    MpesaTransaction = None
+    MpesaReminder = None
+    MpesaReminderRule = None
+    MpesaReconciliationLog = None
+
 __all__ = [
     "User",
     "UserRole",

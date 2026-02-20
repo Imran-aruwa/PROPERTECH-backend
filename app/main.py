@@ -36,6 +36,7 @@ from app.api.routes import (
     leases_router,
     accounting_router,
     listings_router,
+    mpesa_router,
 )
 from app.core.config import settings
 from app.database import test_connection, init_db, close_db_connection
@@ -151,6 +152,7 @@ app.include_router(workflows_router, prefix="/api/workflows", tags=["Workflows"]
 app.include_router(leases_router, prefix="/api/leases", tags=["Leases"])
 app.include_router(accounting_router, prefix="/api/accounting", tags=["Accounting"])
 app.include_router(listings_router, prefix="/api/listings", tags=["Listings"])
+app.include_router(mpesa_router, prefix="/api/mpesa", tags=["Mpesa Intelligence"])
 
 # V1 API compatibility endpoints
 app.include_router(v1_payments_router, prefix="/api/v1", tags=["V1 API"])
@@ -444,6 +446,69 @@ async def startup_event():
                     logger.info("[OK] Accounting enum types ensured")
                 except Exception as acc_enum_err:
                     logger.warning(f"[WARN] Accounting enum creation: {acc_enum_err}")
+                    db.rollback()
+
+                # Mpesa Payment Intelligence enum types
+                try:
+                    db.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE shortcodetype AS ENUM ('paybill', 'till');
+                        EXCEPTION WHEN duplicate_object THEN null;
+                        END $$;
+                    """))
+                    db.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE mpesaenvironment AS ENUM ('sandbox', 'production');
+                        EXCEPTION WHEN duplicate_object THEN null;
+                        END $$;
+                    """))
+                    db.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE transactiontype AS ENUM ('paybill', 'till', 'stk_push');
+                        EXCEPTION WHEN duplicate_object THEN null;
+                        END $$;
+                    """))
+                    db.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE reconciliationstatus AS ENUM (
+                                'unmatched', 'matched', 'partial', 'duplicate', 'disputed'
+                            );
+                        EXCEPTION WHEN duplicate_object THEN null;
+                        END $$;
+                    """))
+                    db.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE remindertype AS ENUM (
+                                'pre_due', 'due_today', 'day_1', 'day_3',
+                                'day_7', 'day_14', 'final_notice'
+                            );
+                        EXCEPTION WHEN duplicate_object THEN null;
+                        END $$;
+                    """))
+                    db.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE reminderchannel AS ENUM ('sms', 'whatsapp');
+                        EXCEPTION WHEN duplicate_object THEN null;
+                        END $$;
+                    """))
+                    db.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE reminderstatus AS ENUM ('pending', 'sent', 'failed', 'delivered');
+                        EXCEPTION WHEN duplicate_object THEN null;
+                        END $$;
+                    """))
+                    db.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE reconciliationaction AS ENUM (
+                                'auto_matched', 'manual_matched', 'flagged', 'disputed'
+                            );
+                        EXCEPTION WHEN duplicate_object THEN null;
+                        END $$;
+                    """))
+                    db.commit()
+                    logger.info("[OK] Mpesa enum types ensured")
+                except Exception as mpesa_enum_err:
+                    logger.warning(f"[WARN] Mpesa enum creation: {mpesa_enum_err}")
                     db.rollback()
 
                 # Vacancy Listing Syndication enum types

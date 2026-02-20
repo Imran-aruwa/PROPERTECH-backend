@@ -70,13 +70,18 @@ class Settings(BaseSettings):
     PAYSTACK_ENABLED: bool = True
     
     # ==================== Daraja (M-Pesa) Configuration ====================
-    # NOTE: Disabled as per your latest requirements (Paystack only)
-    DARAJA_ENABLED: bool = False
+    DARAJA_ENABLED: bool = True
     DARAJA_CONSUMER_KEY: str = ""
     DARAJA_CONSUMER_SECRET: str = ""
     DARAJA_BUSINESS_SHORTCODE: str = ""
     DARAJA_PASSKEY: str = ""
+    # Public-facing backend URL used for Mpesa callback registration
     BACKEND_URL: str = "http://localhost:8000"
+
+    # ==================== Africa's Talking SMS ====================
+    AT_API_KEY: str = ""       # Africa's Talking API key (leave blank for dev logging mode)
+    AT_USERNAME: str = "sandbox"  # "sandbox" for testing, your AT username for production
+    AT_SENDER_ID: str = ""     # optional short-code sender name
     
     # ==================== Supabase Configuration ====================
     # NOTE: Disabled as per your latest requirements (PostgreSQL only)
