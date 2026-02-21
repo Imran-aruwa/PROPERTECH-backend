@@ -352,6 +352,7 @@ async def startup_event():
 
                 # Ensure all unit columns exist (added in later iterations of the model)
                 try:
+                    db.execute(text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS occupancy_type VARCHAR(20) DEFAULT 'renting'"))
                     db.execute(text("ALTER TABLE units ADD COLUMN IF NOT EXISTS has_master_bedroom BOOLEAN DEFAULT false"))
                     db.execute(text("ALTER TABLE units ADD COLUMN IF NOT EXISTS has_servant_quarters BOOLEAN DEFAULT false"))
                     db.execute(text("ALTER TABLE units ADD COLUMN IF NOT EXISTS sq_bathrooms INTEGER DEFAULT 0"))

@@ -41,6 +41,7 @@ class Tenant(Base):
     
     # Status
     status: Mapped[str] = mapped_column(String(20), default="active", index=True)  # active, inactive, evicted
+    occupancy_type: Mapped[str] = mapped_column(String(20), default="renting", nullable=True)  # renting, mortgaging, buying
     move_in_date: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     move_out_date: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     

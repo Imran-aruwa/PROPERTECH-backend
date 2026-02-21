@@ -192,11 +192,8 @@ def get_owner_dashboard(
                 logger.info(f"[DASHBOARD] Using property.total_units fallback: {prop.total_units}")
                 total_units += prop.total_units
 
-    # SECOND FALLBACK: Count ALL units in DB if still zero (for single-owner systems)
-    if total_units == 0 and len(all_units_in_db) > 0:
-        logger.info(f"[DASHBOARD] Using all-units fallback: {len(all_units_in_db)} units")
-        total_units = len(all_units_in_db)
-        occupied_units = sum(1 for u in all_units_in_db if is_unit_occupied(u.status))
+    # NOTE: Removed unsafe "count all units in DB" fallback — it incorrectly attributed
+    # units belonging to other owners to this owner in multi-tenant environments.
 
     occupancy_rate = (occupied_units / total_units * 100) if total_units > 0 else 0
     logger.info(f"[DASHBOARD] Final counts - Units: {total_units}, Occupied: {occupied_units}")
@@ -219,11 +216,6 @@ def get_owner_dashboard(
             .scalar() or 0
         expected_rent += prop_expected
 
-    # FALLBACK: If no expected rent but we have occupied units, use all units
-    if expected_rent == 0 and occupied_units > 0:
-        for unit in all_units_in_db:
-            if is_unit_occupied(unit.status) and unit.monthly_rent:
-                expected_rent += unit.monthly_rent
     logger.info(f"[DASHBOARD] Expected rent: {expected_rent}")
 
     # ===== PAYMENT QUERIES WITH ERROR HANDLING =====
@@ -286,16 +278,24 @@ def get_owner_dashboard(
     total_revenue = float(collected_rent + water_collected + electricity_collected)
     collection_rate = (collected_rent / expected_rent * 100) if expected_rent > 0 else 0
 
-    # Staff metrics
-    total_staff = db.query(Staff).count()
+    # Staff metrics — filter by owner's properties only
+    total_staff = db.query(Staff).filter(
+        Staff.property_id.in_(property_ids)
+    ).count() if property_ids else 0
 
-    # Maintenance metrics
-    total_maintenance = db.query(MaintenanceRequest).count()
+    # Maintenance metrics — filter by owner's properties only
     pending_maintenance = db.query(MaintenanceRequest)\
-        .filter(MaintenanceRequest.status == MaintenanceStatus.PENDING).count()
+        .filter(
+            and_(
+                MaintenanceRequest.property_id.in_(property_ids),
+                MaintenanceRequest.status == MaintenanceStatus.PENDING
+            )
+        ).count() if property_ids else 0
 
-    # Count tenants
-    total_tenants = db.query(Tenant).filter(Tenant.status == "active").count()
+    # Count tenants — filter by owner's properties only
+    total_tenants = db.query(Tenant).filter(
+        and_(Tenant.status == "active", Tenant.property_id.in_(property_ids))
+    ).count() if property_ids else 0
 
     # Pending payments with error handling
     try:

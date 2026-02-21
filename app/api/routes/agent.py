@@ -180,7 +180,10 @@ def get_agent_dashboard(
         ).count()
         for p in properties
     )
-    total_tenants = db.query(Tenant).filter(Tenant.status == "active").count()
+    agent_property_ids = [p.id for p in properties]
+    total_tenants = db.query(Tenant).filter(
+        and_(Tenant.status == "active", Tenant.property_id.in_(agent_property_ids))
+    ).count() if agent_property_ids else 0
     pending_amount = db.query(func.sum(Payment.amount))\
         .filter(
             and_(

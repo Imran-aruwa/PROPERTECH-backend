@@ -4,7 +4,7 @@ Tenant management, payment tracking, maintenance requests, and billing
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, desc
+from sqlalchemy import and_, or_, desc
 from typing import List, Optional
 from datetime import datetime, timedelta
 from uuid import UUID
@@ -182,6 +182,7 @@ def create_tenant(
         nok_phone=tenant_in.emergency_contact_phone or tenant_in.nok_phone or "",
         status="active",
         balance_due=0.0,
+        occupancy_type=getattr(tenant_in, 'occupancy_type', None) or "renting",
     )
 
     db.add(tenant)
@@ -246,18 +247,22 @@ def list_tenants(
 ):
     """List all tenants with enriched data (unit and property info)"""
     if current_user.role == UserRole.OWNER:
-        # Owner sees tenants in their properties
+        # Owner sees only tenants in their properties
         owner_properties = db.query(Property).filter(Property.user_id == current_user.id).all()
         property_ids = [p.id for p in owner_properties]
         if property_ids:
+            # Also catch tenants whose property_id is NULL but unit belongs to owner's properties
+            owner_unit_ids = [
+                u.id for u in db.query(Unit).filter(Unit.property_id.in_(property_ids)).all()
+            ]
             tenants = db.query(Tenant).filter(
-                Tenant.property_id.in_(property_ids)
+                or_(
+                    Tenant.property_id.in_(property_ids),
+                    and_(Tenant.property_id.is_(None), Tenant.unit_id.in_(owner_unit_ids))
+                )
             ).offset(skip).limit(limit).all()
         else:
             tenants = []
-        # Fallback: if no tenants found by property_id, try all tenants (owner might not have property_id set)
-        if not tenants:
-            tenants = db.query(Tenant).offset(skip).limit(limit).all()
     elif current_user.role in [UserRole.AGENT, UserRole.ADMIN, UserRole.CARETAKER]:
         tenants = db.query(Tenant).offset(skip).limit(limit).all()
     elif current_user.role == UserRole.TENANT:
@@ -293,6 +298,7 @@ def list_tenants(
             "move_in_date": t.move_in_date.isoformat() if t.move_in_date else None,
             "move_out_date": t.move_out_date.isoformat() if t.move_out_date else None,
             "id_number": t.id_number,
+            "occupancy_type": getattr(t, 'occupancy_type', None) or "renting",
             "created_at": t.created_at.isoformat() if t.created_at else None,
             "updated_at": t.updated_at.isoformat() if t.updated_at else None,
         })

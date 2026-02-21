@@ -69,6 +69,7 @@ class TenantCreate(BaseModel):
 
     # Additional
     notes: Optional[str] = None
+    occupancy_type: Optional[str] = "renting"  # renting | mortgaging | buying
 
 
 class TenantUpdate(BaseModel):
@@ -81,6 +82,7 @@ class TenantUpdate(BaseModel):
     move_out_date: Optional[datetime] = None
     next_of_kin: Optional[str] = None
     nok_phone: Optional[str] = None
+    occupancy_type: Optional[str] = None
 
 
 class TenantResponse(BaseModel):
@@ -102,6 +104,7 @@ class TenantResponse(BaseModel):
     id_number: Optional[str] = None
     next_of_kin: Optional[str] = None
     nok_phone: Optional[str] = None
+    occupancy_type: Optional[str] = "renting"
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
