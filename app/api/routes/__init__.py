@@ -19,6 +19,7 @@ from app.api.routes.accounting import router as accounting_router
 from app.api.routes.listings import router as listings_router
 from app.api.routes.mpesa import router as mpesa_router
 from app.api.routes.automation import router as automation_router
+from app.api.routes.chat import router as chat_router
 
 __all__ = [
     "auth_router",
@@ -43,4 +44,5 @@ __all__ = [
     "listings_router",
     "mpesa_router",
     "automation_router",
+    "chat_router",
 ]

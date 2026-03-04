@@ -38,6 +38,7 @@ from app.api.routes import (
     listings_router,
     mpesa_router,
     automation_router,
+    chat_router,
 )
 from app.core.config import settings
 from app.database import test_connection, init_db, close_db_connection
@@ -155,6 +156,7 @@ app.include_router(accounting_router, prefix="/api/accounting", tags=["Accountin
 app.include_router(listings_router, prefix="/api/listings", tags=["Listings"])
 app.include_router(mpesa_router, prefix="/api/mpesa", tags=["Mpesa Intelligence"])
 app.include_router(automation_router, prefix="/api/automation", tags=["Autopilot"])
+app.include_router(chat_router, prefix="/api", tags=["Chat"])
 
 # V1 API compatibility endpoints
 app.include_router(v1_payments_router, prefix="/api/v1", tags=["V1 API"])
