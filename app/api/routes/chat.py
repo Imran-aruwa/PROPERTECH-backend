@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
-import anthropic
+import groq
 
 from app.dependencies import get_current_user
 from app.database import get_db
@@ -341,9 +341,9 @@ def chat_endpoint(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=503, detail="AI service not configured — set ANTHROPIC_API_KEY")
+        raise HTTPException(status_code=503, detail="AI service not configured — set GROQ_API_KEY")
 
     # 1. Live data
     live_data = _fetch_live_data(current_user, db, request.context.role)
@@ -360,18 +360,17 @@ def chat_endpoint(
     if not messages:
         raise HTTPException(status_code=400, detail="No messages provided")
 
-    # 4. Call Claude
+    # 4. Call Groq
     try:
-        client = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+        client = groq.Groq(api_key=api_key)
+        response = client.chat.completions.create(
+            model="llama-3.1-70b-versatile",
             max_tokens=1024,
-            system=system_prompt,
-            messages=messages,
+            messages=[{"role": "system", "content": system_prompt}] + messages,
         )
-        reply_text = response.content[0].text
-    except anthropic.APIStatusError as exc:
-        logger.error("Anthropic API error %s: %s", exc.status_code, exc.message)
+        reply_text = response.choices[0].message.content
+    except groq.APIStatusError as exc:
+        logger.error("Groq API error %s: %s", exc.status_code, exc.message)
         raise HTTPException(status_code=502, detail="AI service temporarily unavailable")
     except Exception as exc:
         logger.error("Chat endpoint error: %s", exc, exc_info=True)
