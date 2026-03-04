@@ -37,6 +37,7 @@ from app.api.routes import (
     accounting_router,
     listings_router,
     mpesa_router,
+    automation_router,
 )
 from app.core.config import settings
 from app.database import test_connection, init_db, close_db_connection
@@ -153,6 +154,7 @@ app.include_router(leases_router, prefix="/api/leases", tags=["Leases"])
 app.include_router(accounting_router, prefix="/api/accounting", tags=["Accounting"])
 app.include_router(listings_router, prefix="/api/listings", tags=["Listings"])
 app.include_router(mpesa_router, prefix="/api/mpesa", tags=["Mpesa Intelligence"])
+app.include_router(automation_router, prefix="/api/automation", tags=["Autopilot"])
 
 # V1 API compatibility endpoints
 app.include_router(v1_payments_router, prefix="/api/v1", tags=["V1 API"])
@@ -577,6 +579,15 @@ async def startup_event():
                     logger.warning(f"[WARN] Listing enum creation: {listing_enum_err}")
                     db.rollback()
 
+                # Automation / Autopilot enum types and schema
+                try:
+                    db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS theme_preference VARCHAR(10) DEFAULT 'system'"))
+                    db.commit()
+                    logger.info("[OK] users.theme_preference column ensured")
+                except Exception as theme_err:
+                    logger.warning(f"[WARN] theme_preference column: {theme_err}")
+                    db.rollback()
+
                 # Inspection schema fixes — add new columns added by universal engine migration
                 try:
                     db.execute(text("ALTER TABLE inspections ADD COLUMN IF NOT EXISTS is_external BOOLEAN DEFAULT false"))
@@ -674,6 +685,35 @@ async def startup_event():
     except Exception as fix_error:
         logger.warning(f"[WARN] Property fix failed: {fix_error} - continuing anyway")
 
+    # ── Autopilot: start scheduler, wire event bus, seed templates ────────────
+    logger.info("Starting Autopilot scheduler and event bus...")
+    try:
+        from app.services.scheduler import create_scheduler
+        from app.services.event_bus import event_bus
+        from app.services.automation_engine import AutomationEngine, set_engine
+        from app.services.seed_templates import seed_system_templates
+        from app.database import SessionLocal
+
+        # Start APScheduler
+        _scheduler = create_scheduler()
+        _scheduler.start()
+        logger.info("[OK] Autopilot scheduler started")
+
+        # Create AutomationEngine and wire to event bus
+        _db = SessionLocal()
+        _engine = AutomationEngine(_db)
+        set_engine(_engine)
+        event_bus.subscribe("*", _engine.handle_event)
+        logger.info("[OK] AutomationEngine subscribed to event bus")
+
+        # Seed system templates (idempotent)
+        seed_system_templates(_db)
+        _db.close()
+        logger.info("[OK] Autopilot system templates seeded")
+
+    except Exception as autopilot_err:
+        logger.warning(f"[WARN] Autopilot startup failed: {autopilot_err} — continuing anyway")
+
     logger.info("="*70)
     logger.info("[OK] Application startup complete!")
     logger.info("="*70)
@@ -685,6 +725,16 @@ async def shutdown_event():
     logger.info("="*70)
     logger.info("Shutting down application...")
     logger.info("="*70)
+
+    # Stop APScheduler
+    try:
+        from app.services.scheduler import get_scheduler
+        s = get_scheduler()
+        if s and s.running:
+            s.shutdown(wait=False)
+            logger.info("[OK] Autopilot scheduler stopped")
+    except Exception:
+        pass
 
     # Close database connections
     try:

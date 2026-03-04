@@ -97,6 +97,10 @@ def init_db():
         from app.models.market import AreaMetrics
         from app.models.accounting import AccountingEntry, TaxRecord, WithholdingTaxEntry
         from app.models.lease import Lease, LeaseClause, LeaseSignature
+        from app.models.automation import (
+            AutomationRule, AutomationExecution, AutomationActionLog,
+            AutopilotSettings, AutomationTemplate,
+        )
 
         print(f"[INFO] Creating tables for {len(Base.metadata.tables)} models...")
         Base.metadata.create_all(bind=engine)

@@ -315,6 +315,33 @@ class ReconciliationService:
         # Cancel pending reminders for this tenant this month
         self._cancel_pending_reminders(tenant.id, txn.transaction_date)
 
+        # Publish payment_received event to the Autopilot event bus
+        try:
+            from app.services.event_bus import event_bus, PropertyEvent
+            event_bus.publish(PropertyEvent(
+                event_type="payment_received",
+                owner_id=str(txn.owner_id),
+                payload={
+                    "tenant_id": str(tenant.id),
+                    "tenant_name": tenant.full_name or "",
+                    "tenant_email": tenant.email or "",
+                    "tenant_phone": tenant.phone or "",
+                    "unit_id": str(tenant.unit_id) if tenant.unit_id else None,
+                    "property_id": str(tenant.property_id) if tenant.property_id else None,
+                    "unit_number": unit.unit_number if unit else "",
+                    "amount": txn.amount,
+                    "monthly_rent": float(tenant.rent_amount or 0),
+                    "mpesa_receipt": txn.mpesa_receipt_number,
+                    "reference": txn.mpesa_receipt_number,
+                    "overpayment_amount": max(0, txn.amount - float(tenant.rent_amount or 0)),
+                    "reference_month": txn.transaction_date.strftime("%Y-%m"),
+                    "event_type": "payment_received",
+                },
+                source="reconciliation_service",
+            ))
+        except Exception as _ev_err:
+            logger.debug(f"[reconcile] event_bus.publish skipped: {_ev_err}")
+
         logger.info(
             f"[reconcile] {txn.mpesa_receipt_number} auto-matched to tenant "
             f"'{tenant.full_name}' (score={txn.reconciliation_confidence}, review={flag_review})"

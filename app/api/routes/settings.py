@@ -269,3 +269,28 @@ def delete_account(
         "success": True,
         "message": "Account deleted successfully"
     }
+
+
+# ── Theme Preference ──────────────────────────────────────────────────────────
+
+class ThemePreferenceUpdate(BaseModel):
+    theme: str  # "light" | "dark" | "system"
+
+
+@router.patch("/me/preferences", tags=["settings"])
+def update_theme_preference(
+    body: ThemePreferenceUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update user theme preference (light/dark/system). Used by frontend ThemeToggle."""
+    if body.theme not in ("light", "dark", "system"):
+        raise HTTPException(status_code=400, detail="theme must be 'light', 'dark', or 'system'")
+
+    user = db.query(User).filter(User.id == current_user.id).first()
+    if user:
+        user.theme_preference = body.theme
+        user.updated_at = datetime.utcnow()
+        db.commit()
+
+    return {"success": True, "theme": body.theme}

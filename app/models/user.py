@@ -73,6 +73,7 @@ class User(Base):
     # Custom data
     user_metadata: Mapped[str] = mapped_column(Text, nullable=True)  # JSON string for custom data
     last_login: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    theme_preference: Mapped[str] = mapped_column(String(10), default="system", nullable=True)
     
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
