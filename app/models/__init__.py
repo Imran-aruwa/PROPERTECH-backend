@@ -145,6 +145,16 @@ except ImportError:
     RenewalCampaign = None
     VacancyPreventionSettings = None
 
+try:
+    from app.models.vendor_intelligence import (
+        Vendor, VendorJob, MaintenanceSchedule, MaintenanceCostBudget,
+    )
+except ImportError:
+    Vendor = None
+    VendorJob = None
+    MaintenanceSchedule = None
+    MaintenanceCostBudget = None
+
 __all__ = [
     "User",
     "UserRole",

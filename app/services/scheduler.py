@@ -2,10 +2,13 @@
 APScheduler — Scheduled jobs for the Autonomous Property Manager.
 
 Jobs:
+  07:30 — check_maintenance_schedules (creates VendorJobs for due schedules)
   08:00 — check_payment_overdue   (publishes payment_overdue_3d/7d/14d)
   08:15 — check_lease_expiry      (publishes lease_expiring_60d/30d/7d)
   08:30 — check_vacant_units      (publishes unit_vacant_7d / unit_vacant_30d)
+  08:45 — check_renewal_campaigns (follow-up SMS for stale campaigns)
   09:00 — check_maintenance_overdue (publishes maintenance_overdue)
+  09:00 — check_overdue_leads     (alerts owner for overdue leads)
   Mon 07:00 — weekly_owner_digest
 """
 from __future__ import annotations
@@ -32,6 +35,10 @@ def create_scheduler() -> AsyncIOScheduler:
     global _scheduler
     _scheduler = AsyncIOScheduler(timezone=NAIROBI_TZ)
 
+    _scheduler.add_job(
+        check_maintenance_schedules, "cron", hour=7, minute=30,
+        id="check_maintenance_schedules", replace_existing=True
+    )
     _scheduler.add_job(
         check_payment_overdue, "cron", hour=8, minute=0,
         id="check_payment_overdue", replace_existing=True
@@ -61,7 +68,7 @@ def create_scheduler() -> AsyncIOScheduler:
         id="check_renewal_campaigns", replace_existing=True
     )
 
-    logger.info("[scheduler] AsyncIOScheduler configured with 7 jobs (Africa/Nairobi)")
+    logger.info("[scheduler] AsyncIOScheduler configured with 8 jobs (Africa/Nairobi)")
     return _scheduler
 
 
@@ -402,7 +409,52 @@ async def weekly_owner_digest() -> None:
         db.close()
 
 
-# ── Job 6: check_overdue_leads ────────────────────────────────────────────────
+# ── Job 6: check_maintenance_schedules ───────────────────────────────────────
+
+async def check_maintenance_schedules() -> None:
+    """
+    07:30 EAT daily — find all active MaintenanceSchedules where next_due <= today.
+    Delegates to VendorService.check_due_schedules() per owner.
+    Idempotent: VendorService checks for existing active VendorJob.schedule_id.
+    """
+    from app.models.vendor_intelligence import MaintenanceSchedule
+    from app.models.user import User, UserRole
+
+    db = _get_db()
+    try:
+        today = datetime.now(timezone.utc).date()
+
+        # Get distinct owners who have due schedules
+        owner_ids = (
+            db.query(MaintenanceSchedule.owner_id)
+            .filter(
+                MaintenanceSchedule.is_active == True,
+                MaintenanceSchedule.next_due <= today,
+            )
+            .distinct()
+            .all()
+        )
+
+        processed = 0
+        for (owner_id,) in owner_ids:
+            try:
+                from app.services.vendor_service import VendorService
+                svc = VendorService(db, owner_id)
+                svc.check_due_schedules()
+                processed += 1
+            except Exception as owner_exc:
+                logger.warning(
+                    f"[scheduler] check_maintenance_schedules failed for owner {owner_id}: {owner_exc}"
+                )
+
+        logger.info(f"[scheduler] check_maintenance_schedules: processed {processed} owners")
+    except Exception as exc:
+        logger.error(f"[scheduler] check_maintenance_schedules failed: {exc}", exc_info=True)
+    finally:
+        db.close()
+
+
+# ── Job 7: check_overdue_leads ────────────────────────────────────────────────
 
 async def check_overdue_leads() -> None:
     """

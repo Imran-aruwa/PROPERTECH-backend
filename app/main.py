@@ -41,6 +41,7 @@ from app.api.routes import (
     chat_router,
     price_optimization_router,
     vacancy_prevention_router,
+    vendor_intelligence_router,
 )
 from app.core.config import settings
 from app.database import test_connection, init_db, close_db_connection
@@ -161,6 +162,7 @@ app.include_router(automation_router, prefix="/api/automation", tags=["Autopilot
 app.include_router(chat_router, prefix="/api", tags=["Chat"])
 app.include_router(price_optimization_router, prefix="/api/price-optimization", tags=["Rent Optimizer"])
 app.include_router(vacancy_prevention_router, prefix="/api/vacancy", tags=["Vacancy Prevention"])
+app.include_router(vendor_intelligence_router, prefix="/api", tags=["Vendor Intelligence"])
 
 # V1 API compatibility endpoints
 app.include_router(v1_payments_router, prefix="/api/v1", tags=["V1 API"])
@@ -767,6 +769,108 @@ async def startup_event():
                     logger.warning(f"[WARN] Vacancy Prevention table creation: {vp_err}")
                     db.rollback()
 
+                # Vendor & Maintenance Intelligence Engine — ensure tables exist
+                try:
+                    db.execute(text("""
+                        CREATE TABLE IF NOT EXISTS vendors (
+                            id UUID PRIMARY KEY,
+                            owner_id UUID NOT NULL REFERENCES users(id),
+                            name VARCHAR(255) NOT NULL,
+                            category VARCHAR(50) NOT NULL,
+                            phone VARCHAR(50) NOT NULL,
+                            email VARCHAR(255),
+                            location_area VARCHAR(200),
+                            rating NUMERIC(3,2),
+                            total_jobs INTEGER NOT NULL DEFAULT 0,
+                            completed_jobs INTEGER NOT NULL DEFAULT 0,
+                            avg_response_hours NUMERIC(6,2),
+                            avg_completion_days NUMERIC(6,2),
+                            total_paid NUMERIC(14,2) NOT NULL DEFAULT 0,
+                            is_preferred BOOLEAN NOT NULL DEFAULT FALSE,
+                            is_blacklisted BOOLEAN NOT NULL DEFAULT FALSE,
+                            blacklist_reason TEXT,
+                            notes TEXT,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                    """))
+                    db.execute(text("""
+                        CREATE TABLE IF NOT EXISTS maintenance_schedules (
+                            id UUID PRIMARY KEY,
+                            owner_id UUID NOT NULL REFERENCES users(id),
+                            property_id UUID REFERENCES properties(id),
+                            unit_id UUID REFERENCES units(id),
+                            title VARCHAR(500) NOT NULL,
+                            category VARCHAR(50) NOT NULL,
+                            description TEXT,
+                            frequency VARCHAR(20) NOT NULL,
+                            next_due DATE NOT NULL,
+                            last_completed DATE,
+                            estimated_cost NUMERIC(12,2),
+                            preferred_vendor_id UUID REFERENCES vendors(id),
+                            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                            auto_create_job BOOLEAN NOT NULL DEFAULT FALSE,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                    """))
+                    db.execute(text("""
+                        CREATE TABLE IF NOT EXISTS vendor_jobs (
+                            id UUID PRIMARY KEY,
+                            owner_id UUID NOT NULL REFERENCES users(id),
+                            vendor_id UUID NOT NULL REFERENCES vendors(id),
+                            maintenance_request_id UUID REFERENCES maintenance_requests(id),
+                            unit_id UUID NOT NULL REFERENCES units(id),
+                            property_id UUID NOT NULL REFERENCES properties(id),
+                            title VARCHAR(500) NOT NULL,
+                            description TEXT,
+                            category VARCHAR(50) NOT NULL,
+                            priority VARCHAR(20) NOT NULL DEFAULT 'normal',
+                            status VARCHAR(20) NOT NULL DEFAULT 'assigned',
+                            quoted_amount NUMERIC(12,2),
+                            final_amount NUMERIC(12,2),
+                            paid BOOLEAN NOT NULL DEFAULT FALSE,
+                            paid_at TIMESTAMPTZ,
+                            payment_method VARCHAR(50),
+                            assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            started_at TIMESTAMPTZ,
+                            completed_at TIMESTAMPTZ,
+                            due_date DATE,
+                            owner_rating INTEGER,
+                            owner_review TEXT,
+                            rated_at TIMESTAMPTZ,
+                            photos_before JSONB DEFAULT '[]',
+                            photos_after JSONB DEFAULT '[]',
+                            notes TEXT,
+                            schedule_id UUID REFERENCES maintenance_schedules(id),
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                    """))
+                    db.execute(text("""
+                        CREATE TABLE IF NOT EXISTS maintenance_cost_budgets (
+                            id UUID PRIMARY KEY,
+                            owner_id UUID NOT NULL REFERENCES users(id),
+                            property_id UUID REFERENCES properties(id),
+                            year INTEGER NOT NULL,
+                            month INTEGER,
+                            budget_amount NUMERIC(14,2) NOT NULL,
+                            actual_amount NUMERIC(14,2) NOT NULL DEFAULT 0,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                    """))
+                    # Add assigned_vendor_id to maintenance_requests if not present
+                    db.execute(text(
+                        "ALTER TABLE maintenance_requests ADD COLUMN IF NOT EXISTS "
+                        "assigned_vendor_id UUID REFERENCES vendors(id)"
+                    ))
+                    db.commit()
+                    logger.info("[OK] Vendor Intelligence Engine tables ensured")
+                except Exception as vendor_err:
+                    logger.warning(f"[WARN] Vendor Intelligence table creation: {vendor_err}")
+                    db.rollback()
+
                 # Automation / Autopilot enum types and schema
                 try:
                     db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS theme_preference VARCHAR(10) DEFAULT 'system'"))
@@ -1141,6 +1245,122 @@ async def startup_event():
 
     except Exception as vp_startup_err:
         logger.warning(f"[WARN] Vacancy Prevention startup failed: {vp_startup_err} — continuing anyway")
+
+    # ── Vendor Intelligence: subscribe to maintenance events ──────────────────
+    logger.info("Wiring Vendor Intelligence Engine to event bus...")
+    try:
+        from app.services.event_bus import event_bus as _vi_bus, PropertyEvent as _VI_PE
+        from app.database import SessionLocal as _SL3
+        import uuid as _uuid3
+
+        async def _vi_on_maintenance_created(event: _VI_PE) -> None:
+            """
+            Fires when a maintenance request is created.
+            If owner has preferred vendor for this category, suggest via log.
+            """
+            mr_id = event.payload.get("maintenance_request_id")
+            category = event.payload.get("category", "general")
+            owner_id = event.owner_id
+            if not mr_id:
+                return
+            db = _SL3()
+            try:
+                from app.models.vendor_intelligence import Vendor as _V
+                owner_uuid = _uuid3.UUID(owner_id)
+                # Find preferred vendor in same category
+                preferred = db.query(_V).filter(
+                    _V.owner_id == owner_uuid,
+                    _V.category == category,
+                    _V.is_preferred == True,
+                    _V.is_blacklisted == False,
+                ).first()
+                if preferred:
+                    from app.models.automation import AutomationActionLog
+                    import uuid as _u
+                    log = AutomationActionLog(
+                        id=_u.uuid4(),
+                        execution_id=_u.UUID(int=0),
+                        owner_id=owner_uuid,
+                        action_type="vendor_suggestion",
+                        action_payload={
+                            "maintenance_request_id": mr_id,
+                            "suggested_vendor_id": str(preferred.id),
+                            "suggested_vendor_name": preferred.name,
+                            "category": category,
+                        },
+                        result_status="success",
+                        result_data={
+                            "message": (
+                                f"Preferred vendor '{preferred.name}' available "
+                                f"for {category} work."
+                            )
+                        },
+                        executed_at=datetime.utcnow(),
+                        reversible=False,
+                    )
+                    db.add(log)
+                    db.commit()
+                    logger.info(
+                        f"[vendor] Suggested preferred vendor {preferred.name} "
+                        f"for maintenance request {mr_id}"
+                    )
+            except Exception as exc:
+                logger.warning(f"[vendor] vi_on_maintenance_created failed: {exc}")
+            finally:
+                db.close()
+
+        async def _vi_on_maintenance_overdue(event: _VI_PE) -> None:
+            """
+            Fires when a maintenance request is overdue (>48h open).
+            If no vendor job exists for this request, log alert.
+            """
+            mr_id = event.payload.get("maintenance_request_id")
+            owner_id = event.owner_id
+            if not mr_id:
+                return
+            db = _SL3()
+            try:
+                from app.models.vendor_intelligence import VendorJob as _VJ
+                owner_uuid = _uuid3.UUID(owner_id)
+                mr_uuid = _uuid3.UUID(mr_id)
+                existing_job = db.query(_VJ).filter(
+                    _VJ.maintenance_request_id == mr_uuid,
+                    _VJ.owner_id == owner_uuid,
+                    _VJ.status.notin_(["cancelled", "disputed"]),
+                ).first()
+                if not existing_job:
+                    from app.models.automation import AutomationActionLog
+                    import uuid as _u
+                    log = AutomationActionLog(
+                        id=_u.uuid4(),
+                        execution_id=_u.UUID(int=0),
+                        owner_id=owner_uuid,
+                        action_type="maintenance_overdue_no_vendor",
+                        action_payload={"maintenance_request_id": mr_id},
+                        result_status="success",
+                        result_data={
+                            "message": (
+                                f"Maintenance request {mr_id} is overdue "
+                                f"with no vendor assigned."
+                            )
+                        },
+                        executed_at=datetime.utcnow(),
+                        reversible=False,
+                    )
+                    db.add(log)
+                    db.commit()
+                    logger.info(f"[vendor] Overdue MR {mr_id} has no vendor job assigned")
+            except Exception as exc:
+                logger.warning(f"[vendor] vi_on_maintenance_overdue failed: {exc}")
+            finally:
+                db.close()
+
+        _vi_bus.subscribe("maintenance_request_created", _vi_on_maintenance_created)
+        _vi_bus.subscribe("maintenance_overdue", _vi_on_maintenance_overdue)
+        logger.info("[OK] Vendor Intelligence Engine subscribed to maintenance events")
+
+    except Exception as vi_startup_err:
+        logger.warning(f"[WARN] Vendor Intelligence startup failed: {vi_startup_err} — continuing anyway")
 
     logger.info("="*70)
     logger.info("[OK] Application startup complete!")
