@@ -40,6 +40,7 @@ from app.api.routes import (
     automation_router,
     chat_router,
     price_optimization_router,
+    vacancy_prevention_router,
 )
 from app.core.config import settings
 from app.database import test_connection, init_db, close_db_connection
@@ -159,6 +160,7 @@ app.include_router(mpesa_router, prefix="/api/mpesa", tags=["Mpesa Intelligence"
 app.include_router(automation_router, prefix="/api/automation", tags=["Autopilot"])
 app.include_router(chat_router, prefix="/api", tags=["Chat"])
 app.include_router(price_optimization_router, prefix="/api/price-optimization", tags=["Rent Optimizer"])
+app.include_router(vacancy_prevention_router, prefix="/api/vacancy", tags=["Vacancy Prevention"])
 
 # V1 API compatibility endpoints
 app.include_router(v1_payments_router, prefix="/api/v1", tags=["V1 API"])
@@ -662,6 +664,109 @@ async def startup_event():
                     logger.warning(f"[WARN] Price Optimization table creation: {price_opt_err}")
                     db.rollback()
 
+                # Vacancy Prevention Engine — ensure tables exist
+                try:
+                    db.execute(text("""
+                        CREATE TABLE IF NOT EXISTS vacancy_leads (
+                            id UUID PRIMARY KEY,
+                            owner_id UUID NOT NULL REFERENCES users(id),
+                            property_id UUID REFERENCES properties(id),
+                            unit_id UUID REFERENCES units(id),
+                            lead_name VARCHAR(255) NOT NULL,
+                            lead_phone VARCHAR(50) NOT NULL,
+                            lead_email VARCHAR(255),
+                            source VARCHAR(50) NOT NULL DEFAULT 'manual',
+                            status VARCHAR(50) NOT NULL DEFAULT 'new',
+                            preferred_unit_type VARCHAR(50),
+                            preferred_move_in DATE,
+                            budget_min NUMERIC(12,2),
+                            budget_max NUMERIC(12,2),
+                            notes TEXT,
+                            last_contacted_at TIMESTAMPTZ,
+                            follow_up_due_at TIMESTAMPTZ,
+                            converted_tenant_id UUID REFERENCES users(id),
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                    """))
+                    db.execute(text("""
+                        CREATE TABLE IF NOT EXISTS vacancy_lead_activities (
+                            id UUID PRIMARY KEY,
+                            lead_id UUID NOT NULL REFERENCES vacancy_leads(id) ON DELETE CASCADE,
+                            owner_id UUID NOT NULL REFERENCES users(id),
+                            activity_type VARCHAR(50) NOT NULL,
+                            content TEXT NOT NULL,
+                            performed_by UUID NOT NULL REFERENCES users(id),
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                    """))
+                    db.execute(text("""
+                        CREATE TABLE IF NOT EXISTS listing_syndications (
+                            id UUID PRIMARY KEY,
+                            owner_id UUID NOT NULL REFERENCES users(id),
+                            unit_id UUID NOT NULL REFERENCES units(id),
+                            listing_id UUID,
+                            title VARCHAR(500) NOT NULL,
+                            description TEXT,
+                            monthly_rent NUMERIC(12,2) NOT NULL,
+                            bedrooms INTEGER,
+                            bathrooms INTEGER,
+                            unit_type VARCHAR(50) NOT NULL,
+                            amenities JSONB DEFAULT '[]',
+                            photos JSONB DEFAULT '[]',
+                            location_area VARCHAR(200),
+                            status VARCHAR(20) NOT NULL DEFAULT 'draft',
+                            view_count INTEGER NOT NULL DEFAULT 0,
+                            enquiry_count INTEGER NOT NULL DEFAULT 0,
+                            platforms JSONB DEFAULT '[]',
+                            published_at TIMESTAMPTZ,
+                            filled_at TIMESTAMPTZ,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                    """))
+                    db.execute(text("""
+                        CREATE TABLE IF NOT EXISTS renewal_campaigns (
+                            id UUID PRIMARY KEY,
+                            owner_id UUID NOT NULL REFERENCES users(id),
+                            lease_id UUID NOT NULL REFERENCES leases(id),
+                            tenant_id UUID REFERENCES users(id),
+                            unit_id UUID NOT NULL REFERENCES units(id),
+                            campaign_status VARCHAR(30) NOT NULL DEFAULT 'scheduled',
+                            trigger_days_before_expiry INTEGER NOT NULL,
+                            offer_type VARCHAR(20) NOT NULL DEFAULT 'standard',
+                            incentive_description TEXT,
+                            proposed_rent NUMERIC(12,2),
+                            current_rent NUMERIC(12,2) NOT NULL,
+                            tenant_response VARCHAR(30),
+                            response_received_at TIMESTAMPTZ,
+                            follow_up_count INTEGER NOT NULL DEFAULT 0,
+                            last_follow_up_at TIMESTAMPTZ,
+                            outcome VARCHAR(20),
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                    """))
+                    db.execute(text("""
+                        CREATE TABLE IF NOT EXISTS vacancy_prevention_settings (
+                            id UUID PRIMARY KEY,
+                            owner_id UUID NOT NULL UNIQUE REFERENCES users(id),
+                            is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                            auto_create_listing BOOLEAN NOT NULL DEFAULT TRUE,
+                            auto_syndicate BOOLEAN NOT NULL DEFAULT FALSE,
+                            renewal_campaign_days JSONB DEFAULT '[60, 30, 7]',
+                            lead_follow_up_hours INTEGER NOT NULL DEFAULT 24,
+                            auto_sms_new_leads BOOLEAN NOT NULL DEFAULT TRUE,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                    """))
+                    db.commit()
+                    logger.info("[OK] Vacancy Prevention Engine tables ensured")
+                except Exception as vp_err:
+                    logger.warning(f"[WARN] Vacancy Prevention table creation: {vp_err}")
+                    db.rollback()
+
                 # Automation / Autopilot enum types and schema
                 try:
                     db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS theme_preference VARCHAR(10) DEFAULT 'system'"))
@@ -909,6 +1014,133 @@ async def startup_event():
 
     except Exception as po_startup_err:
         logger.warning(f"[WARN] Price Optimization startup failed: {po_startup_err} — continuing anyway")
+
+    # ── Vacancy Prevention: subscribe to vacancy + lease events ───────────────
+    logger.info("Wiring Vacancy Prevention Engine to event bus...")
+    try:
+        from app.services.event_bus import event_bus as _event_bus, PropertyEvent as _PE
+        from app.services.vacancy_prevention_service import VacancyPreventionService as _VPS
+        from app.models.vacancy_prevention import ListingSyndication as _LS, RenewalCampaign as _RC
+        from app.database import SessionLocal as _SL2
+        import uuid as _uuid2
+
+        async def _vp_on_unit_vacated(event: _PE) -> None:
+            unit_id = event.payload.get("unit_id")
+            if not unit_id:
+                return
+            db = _SL2()
+            try:
+                owner_uuid = _uuid2.UUID(event.owner_id)
+                svc = _VPS(db, owner_uuid)
+                if svc.get_or_create_settings().is_enabled:
+                    svc.handle_unit_vacated(unit_id)
+            except Exception as exc:
+                logger.warning(f"[vacancy] vp_on_unit_vacated failed: {exc}")
+            finally:
+                db.close()
+
+        async def _vp_on_unit_vacant_7d(event: _PE) -> None:
+            """Unit still vacant after 7 days — alert owner and suggest price review."""
+            unit_id = event.payload.get("unit_id")
+            owner_id = event.owner_id
+            unit_number = event.payload.get("unit_number", "")
+            monthly_rent = event.payload.get("monthly_rent", 0)
+            days_vacant = event.payload.get("days_vacant", 7)
+            db = _SL2()
+            try:
+                from app.models.user import User as _U
+                owner_uuid = _uuid2.UUID(owner_id)
+                svc = _VPS(db, owner_uuid)
+                if not svc.get_or_create_settings().is_enabled:
+                    return
+                owner = db.query(_U).filter(_U.id == owner_uuid).first()
+                if owner and hasattr(owner, "phone") and owner.phone:
+                    from app.services.vacancy_prevention_service import _send_sms
+                    msg = (
+                        f"PROPERTECH: Unit {unit_number} has been vacant for {days_vacant} days "
+                        f"(rent KES {float(monthly_rent):,.0f}). "
+                        f"Log in to review your price or promote the listing."
+                    )
+                    _send_sms(owner.phone, msg)
+            except Exception as exc:
+                logger.warning(f"[vacancy] vp_on_unit_vacant_7d failed: {exc}")
+            finally:
+                db.close()
+
+        async def _vp_on_lease_expiring(event: _PE) -> None:
+            lease_id = event.payload.get("lease_id")
+            days_remaining = int(event.payload.get("days_remaining", 0))
+            event_type = event.payload.get("event_type", event.event_type)
+            if not lease_id:
+                return
+            # Map event type to days_before trigger
+            if "60" in event_type:
+                days_before = 60
+            elif "30" in event_type:
+                days_before = 30
+            elif "7" in event_type or "7d" in event_type:
+                days_before = 7
+            else:
+                days_before = days_remaining
+            db = _SL2()
+            try:
+                owner_uuid = _uuid2.UUID(event.owner_id)
+                svc = _VPS(db, owner_uuid)
+                if svc.get_or_create_settings().is_enabled:
+                    svc.handle_lease_expiring(lease_id=lease_id, days_before=days_before)
+            except Exception as exc:
+                logger.warning(f"[vacancy] vp_on_lease_expiring failed: {exc}")
+            finally:
+                db.close()
+
+        async def _vp_on_tenant_onboarded(event: _PE) -> None:
+            unit_id = event.payload.get("unit_id")
+            if not unit_id:
+                return
+            db = _SL2()
+            try:
+                owner_uuid = _uuid2.UUID(event.owner_id)
+                unit_uuid = _uuid2.UUID(unit_id)
+                now = datetime.utcnow()
+
+                # Mark active listing as filled
+                synd = db.query(_LS).filter(
+                    _LS.unit_id == unit_uuid,
+                    _LS.owner_id == owner_uuid,
+                    _LS.status == "active",
+                ).first()
+                if synd:
+                    synd.status = "filled"
+                    synd.filled_at = now
+                    logger.info(f"[vacancy] Syndication {synd.id} marked filled")
+
+                # Mark renewal campaign as renewed if applicable
+                campaign = db.query(_RC).filter(
+                    _RC.unit_id == unit_uuid,
+                    _RC.owner_id == owner_uuid,
+                    _RC.campaign_status.in_(["active", "responded"]),
+                    _RC.outcome == None,  # noqa: E711
+                ).first()
+                if campaign:
+                    campaign.outcome = "renewed"
+                    campaign.campaign_status = "accepted"
+
+                db.commit()
+            except Exception as exc:
+                logger.warning(f"[vacancy] vp_on_tenant_onboarded failed: {exc}")
+            finally:
+                db.close()
+
+        _event_bus.subscribe("unit_vacated", _vp_on_unit_vacated)
+        _event_bus.subscribe("unit_vacant_7d", _vp_on_unit_vacant_7d)
+        _event_bus.subscribe("lease_expiring_60d", _vp_on_lease_expiring)
+        _event_bus.subscribe("lease_expiring_30d", _vp_on_lease_expiring)
+        _event_bus.subscribe("lease_expiring_7d", _vp_on_lease_expiring)
+        _event_bus.subscribe("tenant_onboarded", _vp_on_tenant_onboarded)
+        logger.info("[OK] Vacancy Prevention Engine subscribed to 6 events")
+
+    except Exception as vp_startup_err:
+        logger.warning(f"[WARN] Vacancy Prevention startup failed: {vp_startup_err} — continuing anyway")
 
     logger.info("="*70)
     logger.info("[OK] Application startup complete!")

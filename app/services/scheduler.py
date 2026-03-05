@@ -52,8 +52,16 @@ def create_scheduler() -> AsyncIOScheduler:
         weekly_owner_digest, "cron", day_of_week="mon", hour=7, minute=0,
         id="weekly_owner_digest", replace_existing=True
     )
+    _scheduler.add_job(
+        check_overdue_leads, "cron", hour=9, minute=0,
+        id="check_overdue_leads", replace_existing=True
+    )
+    _scheduler.add_job(
+        check_renewal_campaigns, "cron", hour=8, minute=45,
+        id="check_renewal_campaigns", replace_existing=True
+    )
 
-    logger.info("[scheduler] AsyncIOScheduler configured with 5 jobs (Africa/Nairobi)")
+    logger.info("[scheduler] AsyncIOScheduler configured with 7 jobs (Africa/Nairobi)")
     return _scheduler
 
 
@@ -390,5 +398,154 @@ async def weekly_owner_digest() -> None:
         logger.info(f"[scheduler] weekly_owner_digest: queued for {len(settings_list)} owners")
     except Exception as exc:
         logger.error(f"[scheduler] weekly_owner_digest failed: {exc}", exc_info=True)
+    finally:
+        db.close()
+
+
+# ── Job 6: check_overdue_leads ────────────────────────────────────────────────
+
+async def check_overdue_leads() -> None:
+    """
+    09:00 EAT daily — find all leads where follow_up_due_at < now
+    and status not in (converted/lost/rejected).
+    Alert owner by SMS for each overdue lead.
+    """
+    from app.models.vacancy_prevention import VacancyLead, VacancyPreventionSettings
+    from app.models.user import User
+
+    db = _get_db()
+    try:
+        now = datetime.now(timezone.utc)
+        inactive = {"converted", "lost", "rejected"}
+
+        overdue_leads = (
+            db.query(VacancyLead)
+            .filter(
+                VacancyLead.follow_up_due_at < now,
+                VacancyLead.status.notin_(list(inactive)),
+            )
+            .all()
+        )
+
+        # Group by owner
+        by_owner: dict = {}
+        for lead in overdue_leads:
+            key = str(lead.owner_id)
+            by_owner.setdefault(key, []).append(lead)
+
+        alerted = 0
+        for owner_id_str, leads in by_owner.items():
+            try:
+                owner_uuid = uuid.UUID(owner_id_str)
+                owner = db.query(User).filter(User.id == owner_uuid).first()
+                if not owner:
+                    continue
+
+                owner_phone = getattr(owner, "phone", None)
+                if not owner_phone:
+                    continue
+
+                settings = (
+                    db.query(VacancyPreventionSettings)
+                    .filter(VacancyPreventionSettings.owner_id == owner_uuid)
+                    .first()
+                )
+                if settings and not settings.is_enabled:
+                    continue
+
+                for lead in leads[:5]:  # cap at 5 alerts per owner per day
+                    due = lead.follow_up_due_at
+                    if due and hasattr(due, "tzinfo") and due.tzinfo is None:
+                        due = due.replace(tzinfo=timezone.utc)
+                    days_overdue = max(0, (now - due).days) if due else 0
+
+                    msg = (
+                        f"PROPERTECH: Lead {lead.lead_name} ({lead.lead_phone}) "
+                        f"has not been followed up. "
+                        f"{days_overdue} day(s) overdue. Log in to action."
+                    )
+                    from app.services.vacancy_prevention_service import _send_sms
+                    _send_sms(owner_phone, msg)
+                    alerted += 1
+
+            except Exception as owner_exc:
+                logger.warning(f"[scheduler] overdue lead alert failed for {owner_id_str}: {owner_exc}")
+
+        logger.info(f"[scheduler] check_overdue_leads: sent {alerted} alerts")
+    except Exception as exc:
+        logger.error(f"[scheduler] check_overdue_leads failed: {exc}", exc_info=True)
+    finally:
+        db.close()
+
+
+# ── Job 7: check_renewal_campaigns ───────────────────────────────────────────
+
+async def check_renewal_campaigns() -> None:
+    """
+    08:45 EAT daily — find active campaigns with no response for > 7 days.
+    Send follow-up SMS to tenant and increment follow_up_count.
+    """
+    from app.models.vacancy_prevention import RenewalCampaign
+    from app.models.lease import Lease
+    from app.models.property import Unit
+
+    db = _get_db()
+    try:
+        now = datetime.now(timezone.utc)
+        stale_cutoff = now - timedelta(days=7)
+
+        campaigns = (
+            db.query(RenewalCampaign)
+            .filter(
+                RenewalCampaign.campaign_status == "active",
+                RenewalCampaign.tenant_response == None,  # noqa: E711
+            )
+            .all()
+        )
+
+        followed_up = 0
+        for campaign in campaigns:
+            last = campaign.last_follow_up_at
+            if last:
+                if hasattr(last, "tzinfo") and last.tzinfo is None:
+                    last = last.replace(tzinfo=timezone.utc)
+                if last > stale_cutoff:
+                    continue  # followed up recently — skip
+
+            lease = (
+                db.query(Lease).filter(Lease.id == campaign.lease_id).first()
+                if campaign.lease_id else None
+            )
+            if not lease or not lease.tenant_phone:
+                continue
+
+            unit = (
+                db.query(Unit).filter(Unit.id == campaign.unit_id).first()
+                if campaign.unit_id else None
+            )
+            unit_label = f"Unit {unit.unit_number}" if unit else "your unit"
+            tenant_name = lease.tenant_name or "Tenant"
+            end_date = lease.end_date.strftime("%d %b %Y") if lease.end_date else "soon"
+            rent = f"{float(campaign.current_rent or 0):,.0f}"
+
+            msg = (
+                f"Hi {tenant_name}, just a reminder — your lease for {unit_label} "
+                f"expires on {end_date}. "
+                f"Reply YES to renew at KES {rent}/month. PROPERTECH"
+            )
+            from app.services.vacancy_prevention_service import _send_sms
+            _send_sms(lease.tenant_phone, msg)
+
+            campaign.follow_up_count = (campaign.follow_up_count or 0) + 1
+            campaign.last_follow_up_at = now
+            followed_up += 1
+
+        if followed_up:
+            db.commit()
+
+        logger.info(f"[scheduler] check_renewal_campaigns: sent {followed_up} follow-ups")
+    except Exception as exc:
+        logger.error(f"[scheduler] check_renewal_campaigns failed: {exc}", exc_info=True)
+        db.rollback()
     finally:
         db.close()

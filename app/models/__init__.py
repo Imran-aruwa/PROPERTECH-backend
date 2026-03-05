@@ -133,6 +133,18 @@ except ImportError:
     PriceOptimizationSettings = None
     VacancyHistory = None
 
+try:
+    from app.models.vacancy_prevention import (
+        VacancyLead, VacancyLeadActivity, ListingSyndication,
+        RenewalCampaign, VacancyPreventionSettings,
+    )
+except ImportError:
+    VacancyLead = None
+    VacancyLeadActivity = None
+    ListingSyndication = None
+    RenewalCampaign = None
+    VacancyPreventionSettings = None
+
 __all__ = [
     "User",
     "UserRole",
