@@ -123,6 +123,16 @@ except ImportError:
     MpesaReminderRule = None
     MpesaReconciliationLog = None
 
+try:
+    from app.models.price_optimization import (
+        RentReview, MarketComparable, PriceOptimizationSettings, VacancyHistory,
+    )
+except ImportError:
+    RentReview = None
+    MarketComparable = None
+    PriceOptimizationSettings = None
+    VacancyHistory = None
+
 __all__ = [
     "User",
     "UserRole",

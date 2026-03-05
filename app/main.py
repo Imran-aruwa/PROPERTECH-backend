@@ -39,6 +39,7 @@ from app.api.routes import (
     mpesa_router,
     automation_router,
     chat_router,
+    price_optimization_router,
 )
 from app.core.config import settings
 from app.database import test_connection, init_db, close_db_connection
@@ -157,6 +158,7 @@ app.include_router(listings_router, prefix="/api/listings", tags=["Listings"])
 app.include_router(mpesa_router, prefix="/api/mpesa", tags=["Mpesa Intelligence"])
 app.include_router(automation_router, prefix="/api/automation", tags=["Autopilot"])
 app.include_router(chat_router, prefix="/api", tags=["Chat"])
+app.include_router(price_optimization_router, prefix="/api/price-optimization", tags=["Rent Optimizer"])
 
 # V1 API compatibility endpoints
 app.include_router(v1_payments_router, prefix="/api/v1", tags=["V1 API"])
@@ -581,6 +583,85 @@ async def startup_event():
                     logger.warning(f"[WARN] Listing enum creation: {listing_enum_err}")
                     db.rollback()
 
+                # Price Optimization Engine — ensure tables exist
+                # (SQLAlchemy create_all handles this; we just ensure the schema is correct)
+                try:
+                    db.execute(text("""
+                        CREATE TABLE IF NOT EXISTS rent_reviews (
+                            id UUID PRIMARY KEY,
+                            owner_id UUID NOT NULL REFERENCES users(id),
+                            unit_id UUID NOT NULL REFERENCES units(id),
+                            property_id UUID NOT NULL REFERENCES properties(id),
+                            trigger VARCHAR(50) NOT NULL,
+                            current_rent NUMERIC(12,2) NOT NULL,
+                            recommended_rent NUMERIC(12,2) NOT NULL,
+                            min_rent NUMERIC(12,2) NOT NULL,
+                            max_rent NUMERIC(12,2) NOT NULL,
+                            confidence_score INTEGER DEFAULT 50,
+                            reasoning JSONB,
+                            market_data_snapshot JSONB,
+                            status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                            accepted_rent NUMERIC(12,2),
+                            reviewed_by UUID REFERENCES users(id),
+                            reviewed_at TIMESTAMPTZ,
+                            applied_at TIMESTAMPTZ,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                    """))
+                    db.execute(text("""
+                        CREATE TABLE IF NOT EXISTS market_comparables (
+                            id UUID PRIMARY KEY,
+                            owner_id UUID NOT NULL REFERENCES users(id),
+                            property_id UUID REFERENCES properties(id),
+                            unit_type VARCHAR(50) NOT NULL,
+                            bedrooms INTEGER,
+                            location_area VARCHAR(200) NOT NULL,
+                            asking_rent NUMERIC(12,2) NOT NULL,
+                            actual_rent NUMERIC(12,2),
+                            vacancy_days INTEGER,
+                            source VARCHAR(30) NOT NULL DEFAULT 'manual',
+                            data_date DATE NOT NULL,
+                            notes TEXT,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                    """))
+                    db.execute(text("""
+                        CREATE TABLE IF NOT EXISTS price_optimization_settings (
+                            id UUID PRIMARY KEY,
+                            owner_id UUID NOT NULL UNIQUE REFERENCES users(id),
+                            is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                            auto_apply BOOLEAN NOT NULL DEFAULT FALSE,
+                            max_increase_pct NUMERIC(5,2) NOT NULL DEFAULT 10.0,
+                            max_decrease_pct NUMERIC(5,2) NOT NULL DEFAULT 15.0,
+                            target_vacancy_days INTEGER NOT NULL DEFAULT 14,
+                            min_rent_floor NUMERIC(12,2),
+                            comparable_radius_km NUMERIC(5,2) NOT NULL DEFAULT 2.0,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                    """))
+                    db.execute(text("""
+                        CREATE TABLE IF NOT EXISTS vacancy_history (
+                            id UUID PRIMARY KEY,
+                            unit_id UUID NOT NULL REFERENCES units(id),
+                            owner_id UUID NOT NULL REFERENCES users(id),
+                            vacant_from TIMESTAMPTZ NOT NULL,
+                            vacant_until TIMESTAMPTZ,
+                            days_vacant INTEGER,
+                            rent_at_vacancy NUMERIC(12,2) NOT NULL,
+                            rent_when_filled NUMERIC(12,2),
+                            price_changes_count INTEGER NOT NULL DEFAULT 0,
+                            filled_by_tenant_id UUID REFERENCES users(id),
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                    """))
+                    db.commit()
+                    logger.info("[OK] Price Optimization Engine tables ensured")
+                except Exception as price_opt_err:
+                    logger.warning(f"[WARN] Price Optimization table creation: {price_opt_err}")
+                    db.rollback()
+
                 # Automation / Autopilot enum types and schema
                 try:
                     db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS theme_preference VARCHAR(10) DEFAULT 'system'"))
@@ -715,6 +796,119 @@ async def startup_event():
 
     except Exception as autopilot_err:
         logger.warning(f"[WARN] Autopilot startup failed: {autopilot_err} — continuing anyway")
+
+    # ── Price Optimization: subscribe to vacancy events ────────────────────────
+    logger.info("Wiring Price Optimization Engine to event bus...")
+    try:
+        from app.services.event_bus import event_bus, PropertyEvent
+        from app.services.price_optimization_service import PriceOptimizationService
+        from app.services.vacancy_history_service import VacancyHistoryService
+        from app.models.automation import AutomationActionLog
+        from app.database import SessionLocal
+        import uuid as _uuid
+        import json as _json
+
+        async def _on_unit_vacated(event: PropertyEvent) -> None:
+            """
+            Fires when a unit goes vacant.
+            1. Starts vacancy history record.
+            2. Creates a pending RentReview.
+            3. If auto_apply=True, immediately applies the recommendation.
+            """
+            unit_id = event.payload.get("unit_id")
+            owner_id = event.owner_id
+            current_rent = float(event.payload.get("monthly_rent", 0))
+            if not unit_id:
+                return
+
+            db = SessionLocal()
+            try:
+                owner_uuid = _uuid.UUID(owner_id)
+
+                # 1. Track vacancy
+                vh_svc = VacancyHistoryService(db)
+                try:
+                    vh_svc.start_vacancy(unit_id, owner_id, current_rent)
+                except Exception as vh_err:
+                    logger.warning(f"[price_opt] start_vacancy failed: {vh_err}")
+
+                # 2. Create review
+                svc = PriceOptimizationService(db, owner_uuid)
+                try:
+                    review = svc.create_review(unit_id=unit_id, trigger="unit_vacant")
+                except Exception as rev_err:
+                    logger.warning(f"[price_opt] create_review on unit_vacated failed: {rev_err}")
+                    return
+
+                # 3. Auto-apply if setting is on
+                from app.models.price_optimization import PriceOptimizationSettings as _POS
+                settings = db.query(_POS).filter(_POS.owner_id == owner_uuid).first()
+                if settings and settings.auto_apply:
+                    try:
+                        svc.apply_recommendation(
+                            review_id=str(review.id),
+                            accepted_rent=float(review.recommended_rent),
+                            reviewed_by=owner_uuid,
+                        )
+                        # Log to automation_actions_log for Autopilot Audit visibility
+                        log_entry = AutomationActionLog(
+                            id=_uuid.uuid4(),
+                            execution_id=_uuid.UUID(int=0),  # synthetic
+                            owner_id=owner_uuid,
+                            action_type="auto_apply_rent_recommendation",
+                            action_payload={
+                                "unit_id": unit_id,
+                                "old_rent": current_rent,
+                                "new_rent": float(review.recommended_rent),
+                                "review_id": str(review.id),
+                                "trigger": "unit_vacant",
+                            },
+                            result_status="success",
+                            result_data={
+                                "message": (
+                                    f"Rent auto-changed from KES {current_rent:,.0f} "
+                                    f"to KES {float(review.recommended_rent):,.0f} "
+                                    f"(auto_apply=True)"
+                                ),
+                                "review_id": str(review.id),
+                            },
+                            executed_at=datetime.utcnow(),
+                            reversible=True,
+                        )
+                        db.add(log_entry)
+                        db.commit()
+                        logger.info(
+                            f"[price_opt] AUTO-APPLIED rent for unit {unit_id}: "
+                            f"KES {current_rent:,.0f} → KES {float(review.recommended_rent):,.0f}"
+                        )
+                    except Exception as apply_err:
+                        logger.error(f"[price_opt] auto_apply failed: {apply_err}", exc_info=True)
+            finally:
+                db.close()
+
+        async def _on_tenant_onboarded(event: PropertyEvent) -> None:
+            """Fires when a tenant is onboarded — closes the open vacancy record."""
+            unit_id = event.payload.get("unit_id")
+            tenant_id = event.payload.get("tenant_id")
+            rent_when_filled = float(event.payload.get("monthly_rent", 0))
+            if not unit_id:
+                return
+
+            db = SessionLocal()
+            try:
+                vh_svc = VacancyHistoryService(db)
+                vh_svc.end_vacancy(unit_id, tenant_id, rent_when_filled)
+            except Exception as exc:
+                logger.warning(f"[price_opt] end_vacancy on tenant_onboarded failed: {exc}")
+            finally:
+                db.close()
+
+        event_bus.subscribe("unit_vacated", _on_unit_vacated)
+        event_bus.subscribe("tenant_onboarded", _on_tenant_onboarded)
+        logger.info("[OK] Price Optimization Engine subscribed to unit_vacated + tenant_onboarded")
+
+    except Exception as po_startup_err:
+        logger.warning(f"[WARN] Price Optimization startup failed: {po_startup_err} — continuing anyway")
 
     logger.info("="*70)
     logger.info("[OK] Application startup complete!")
