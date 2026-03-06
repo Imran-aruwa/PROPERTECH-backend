@@ -977,6 +977,51 @@ async def startup_event():
                     logger.warning(f"[WARN] Inspection schema fix: {insp_err}")
                     db.rollback()
 
+                # Offline Inspection & Sync Engine (Feature #7) — new tables + columns
+                try:
+                    db.execute(text("""
+                        CREATE TABLE IF NOT EXISTS inspection_rooms (
+                            id UUID PRIMARY KEY,
+                            inspection_id UUID NOT NULL REFERENCES inspections(id) ON DELETE CASCADE,
+                            client_uuid UUID NOT NULL UNIQUE,
+                            name VARCHAR(255) NOT NULL,
+                            order_index INTEGER NOT NULL DEFAULT 0,
+                            condition_summary VARCHAR(20),
+                            notes TEXT,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                    """))
+                    db.execute(text("""
+                        CREATE TABLE IF NOT EXISTS sync_queue (
+                            id UUID PRIMARY KEY,
+                            device_id VARCHAR(255) NOT NULL,
+                            owner_id UUID NOT NULL REFERENCES users(id),
+                            payload JSONB NOT NULL,
+                            status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                            attempts INTEGER NOT NULL DEFAULT 0,
+                            result JSONB,
+                            error_detail TEXT,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            processed_at TIMESTAMPTZ
+                        )
+                    """))
+                    # New columns on existing inspection tables
+                    db.execute(text("ALTER TABLE inspection_items ADD COLUMN IF NOT EXISTS room_id UUID REFERENCES inspection_rooms(id)"))
+                    db.execute(text("ALTER TABLE inspection_items ADD COLUMN IF NOT EXISTS requires_maintenance BOOLEAN DEFAULT false"))
+                    db.execute(text("ALTER TABLE inspection_items ADD COLUMN IF NOT EXISTS maintenance_priority VARCHAR(20) DEFAULT 'normal'"))
+                    db.execute(text("ALTER TABLE inspection_items ADD COLUMN IF NOT EXISTS vendor_job_id UUID"))
+                    db.execute(text("ALTER TABLE inspection_templates ADD COLUMN IF NOT EXISTS rooms JSONB"))
+                    db.execute(text("ALTER TABLE inspection_templates ADD COLUMN IF NOT EXISTS is_system_template BOOLEAN DEFAULT false"))
+                    # Indexes for performance
+                    db.execute(text("CREATE INDEX IF NOT EXISTS idx_inspection_rooms_inspection ON inspection_rooms(inspection_id)"))
+                    db.execute(text("CREATE INDEX IF NOT EXISTS idx_sync_queue_device ON sync_queue(device_id)"))
+                    db.execute(text("CREATE INDEX IF NOT EXISTS idx_sync_queue_status ON sync_queue(status)"))
+                    db.commit()
+                    logger.info("[OK] Offline Inspection Engine tables/columns ensured")
+                except Exception as offline_insp_err:
+                    logger.warning(f"[WARN] Offline Inspection schema: {offline_insp_err}")
+                    db.rollback()
+
             else:
                 logger.info("[INFO] Non-PostgreSQL database, skipping schema check")
         except Exception as schema_error:
@@ -1434,6 +1479,27 @@ async def startup_event():
 
     except Exception as vi_startup_err:
         logger.warning(f"[WARN] Vendor Intelligence startup failed: {vi_startup_err} — continuing anyway")
+
+    # ── Offline Inspection Engine: seed system templates for all owners ────────
+    logger.info("Seeding inspection system templates...")
+    try:
+        from app.services.offline_inspection_service import InspectionService
+        from app.database import SessionLocal
+        from app.models.user import User as _UserM, UserRole as _UR
+
+        _seed_db = SessionLocal()
+        try:
+            owners = _seed_db.query(_UserM).filter(_UserM.role == _UR.OWNER).all()
+            for _owner in owners:
+                try:
+                    InspectionService(_seed_db, _owner.id).seed_system_templates()
+                except Exception as _se:
+                    logger.warning(f"[WARN] Template seed for owner {_owner.id}: {_se}")
+            logger.info(f"[OK] Inspection templates seeded for {len(owners)} owner(s)")
+        finally:
+            _seed_db.close()
+    except Exception as seed_insp_err:
+        logger.warning(f"[WARN] Inspection template seeding failed: {seed_insp_err} — continuing anyway")
 
     logger.info("="*70)
     logger.info("[OK] Application startup complete!")

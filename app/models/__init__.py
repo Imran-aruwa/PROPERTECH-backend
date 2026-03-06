@@ -165,6 +165,12 @@ except ImportError:
     ProfitTarget = None
     FinancialReport = None
 
+try:
+    from app.models.offline_inspection import InspectionRoom, SyncQueue
+except ImportError:
+    InspectionRoom = None
+    SyncQueue = None
+
 __all__ = [
     "User",
     "UserRole",

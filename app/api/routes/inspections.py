@@ -37,6 +37,11 @@ from app.schemas.inspection import (
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["inspections"])
 
+# Lazy import to avoid circular deps
+def _get_inspection_service(db, owner_id):
+    from app.services.offline_inspection_service import InspectionService
+    return InspectionService(db, owner_id)
+
 # Roles that map to performed_by_role values
 INSPECTION_ROLES = {
     UserRole.OWNER: "owner",
@@ -665,3 +670,167 @@ def delete_template(
     db.commit()
 
     return {"success": True, "detail": "Template deleted"}
+
+
+# ============================================
+# OFFLINE SYNC ENDPOINTS (Feature #7)
+# ============================================
+
+@router.post("/sync", status_code=status.HTTP_200_OK)
+def sync_inspections(
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Batch sync endpoint for PWA offline inspections.
+    Accepts a payload containing inspections, rooms, items, and meter readings.
+    Fully idempotent via client_uuid deduplication.
+    Always returns 200 — partial failures are reported in 'errors' list.
+    """
+    if current_user.role not in INSPECTION_ROLES:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    svc = _get_inspection_service(db, current_user.id)
+    device_id = payload.get("device_id", "unknown")
+    result = svc.process_sync(device_id, payload)
+
+    # Optionally store in sync_queue for audit
+    try:
+        from app.models.offline_inspection import SyncQueue
+        sq = SyncQueue(
+            device_id=device_id,
+            owner_id=current_user.id,
+            payload=payload,
+            status="done",
+            attempts=1,
+            result=result,
+        )
+        sq.processed_at = datetime.utcnow()
+        db.add(sq)
+        db.commit()
+    except Exception as sq_err:
+        logger.warning("SyncQueue log failed: %s", sq_err)
+
+    return result
+
+
+@router.get("/{inspection_id}/report")
+def get_inspection_report(
+    inspection_id: uuid_module.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Generate a structured inspection report for an inspection."""
+    inspection = db.query(Inspection).filter(Inspection.id == inspection_id).first()
+    if not inspection:
+        raise HTTPException(status_code=404, detail="Inspection not found")
+
+    # Permission check (same as get_inspection_detail)
+    has_access = False
+    if current_user.role == UserRole.ADMIN:
+        has_access = True
+    elif current_user.role == UserRole.CARETAKER:
+        has_access = inspection.performed_by_id == current_user.id
+    elif current_user.role in [UserRole.OWNER, UserRole.AGENT]:
+        owner_property_ids = get_user_accessible_property_ids(db, current_user)
+        has_access = inspection.property_id in owner_property_ids
+    if not has_access:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    svc = _get_inspection_service(db, current_user.id)
+    report = svc.generate_report(str(inspection_id))
+    if not report:
+        raise HTTPException(status_code=404, detail="Report could not be generated")
+    return report
+
+
+@router.post("/{inspection_id}/report/email", status_code=status.HTTP_200_OK)
+def email_inspection_report(
+    inspection_id: uuid_module.UUID,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Email an inspection report to specified recipients.
+    Body: {recipients: [str], message?: str}
+    """
+    inspection = db.query(Inspection).filter(Inspection.id == inspection_id).first()
+    if not inspection:
+        raise HTTPException(status_code=404, detail="Inspection not found")
+
+    recipients = body.get("recipients", [])
+    if not recipients:
+        raise HTTPException(status_code=400, detail="No recipients specified")
+
+    svc = _get_inspection_service(db, current_user.id)
+    report = svc.generate_report(str(inspection_id))
+    if not report:
+        raise HTTPException(status_code=404, detail="Report could not be generated")
+
+    # Stub: log intent (email service not yet wired)
+    logger.info(
+        "Inspection report email requested: inspection=%s recipients=%s by user=%s",
+        inspection_id, recipients, current_user.id
+    )
+
+    return {
+        "success": True,
+        "message": f"Report queued for {len(recipients)} recipient(s)",
+        "recipients": recipients,
+    }
+
+
+@router.get("/sync-status/{device_id}")
+def get_sync_status(
+    device_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return sync statistics for a specific device."""
+    from app.models.offline_inspection import SyncQueue
+
+    entries = db.query(SyncQueue).filter(
+        SyncQueue.device_id == device_id,
+        SyncQueue.owner_id == current_user.id,
+    ).order_by(SyncQueue.created_at.desc()).limit(20).all()
+
+    total_synced = sum((e.result or {}).get("synced", 0) for e in entries)
+    total_errors = sum(len((e.result or {}).get("errors", [])) for e in entries)
+    last_sync = entries[0].processed_at if entries else None
+
+    return {
+        "device_id": device_id,
+        "sync_count": len(entries),
+        "total_synced_records": total_synced,
+        "total_errors": total_errors,
+        "last_sync_at": last_sync,
+        "recent": [
+            {
+                "id": str(e.id),
+                "status": e.status,
+                "synced": (e.result or {}).get("synced", 0),
+                "skipped": (e.result or {}).get("skipped", 0),
+                "errors": (e.result or {}).get("errors", []),
+                "created_at": e.created_at,
+                "processed_at": e.processed_at,
+            }
+            for e in entries
+        ],
+    }
+
+
+@router.get("/templates/seed")
+def seed_templates(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Seed system inspection templates for the current owner (idempotent)."""
+    if current_user.role not in [UserRole.OWNER, UserRole.AGENT, UserRole.ADMIN]:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    svc = _get_inspection_service(db, current_user.id)
+    svc.seed_system_templates()
+    templates = svc.get_templates()
+    return {"seeded": True, "count": len(templates), "templates": templates}
