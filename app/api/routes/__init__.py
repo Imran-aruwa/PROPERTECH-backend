@@ -23,6 +23,7 @@ from app.api.routes.chat import router as chat_router
 from app.api.routes.price_optimization import router as price_optimization_router
 from app.api.routes.vacancy_prevention import router as vacancy_prevention_router
 from app.api.routes.vendor_intelligence import router as vendor_intelligence_router
+from app.api.routes.profit_engine import router as profit_engine_router
 
 __all__ = [
     "auth_router",
@@ -51,4 +52,5 @@ __all__ = [
     "price_optimization_router",
     "vacancy_prevention_router",
     "vendor_intelligence_router",
+    "profit_engine_router",
 ]

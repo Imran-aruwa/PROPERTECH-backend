@@ -42,6 +42,7 @@ from app.api.routes import (
     price_optimization_router,
     vacancy_prevention_router,
     vendor_intelligence_router,
+    profit_engine_router,
 )
 from app.core.config import settings
 from app.database import test_connection, init_db, close_db_connection
@@ -163,6 +164,7 @@ app.include_router(chat_router, prefix="/api", tags=["Chat"])
 app.include_router(price_optimization_router, prefix="/api/price-optimization", tags=["Rent Optimizer"])
 app.include_router(vacancy_prevention_router, prefix="/api/vacancy", tags=["Vacancy Prevention"])
 app.include_router(vendor_intelligence_router, prefix="/api", tags=["Vendor Intelligence"])
+app.include_router(profit_engine_router, prefix="/api", tags=["Profit Engine"])
 
 # V1 API compatibility endpoints
 app.include_router(v1_payments_router, prefix="/api/v1", tags=["V1 API"])
@@ -869,6 +871,77 @@ async def startup_event():
                     logger.info("[OK] Vendor Intelligence Engine tables ensured")
                 except Exception as vendor_err:
                     logger.warning(f"[WARN] Vendor Intelligence table creation: {vendor_err}")
+                    db.rollback()
+
+                # Profit Optimization Engine — ensure tables exist
+                try:
+                    db.execute(text("""
+                        CREATE TABLE IF NOT EXISTS financial_snapshots (
+                            id UUID PRIMARY KEY,
+                            owner_id UUID NOT NULL REFERENCES users(id),
+                            property_id UUID REFERENCES properties(id),
+                            unit_id UUID REFERENCES units(id),
+                            snapshot_period VARCHAR(7) NOT NULL,
+                            revenue_gross NUMERIC(14,2) NOT NULL DEFAULT 0,
+                            revenue_expected NUMERIC(14,2) NOT NULL DEFAULT 0,
+                            vacancy_loss NUMERIC(14,2) NOT NULL DEFAULT 0,
+                            maintenance_cost NUMERIC(14,2) NOT NULL DEFAULT 0,
+                            other_expenses NUMERIC(14,2) NOT NULL DEFAULT 0,
+                            late_fees_collected NUMERIC(14,2) NOT NULL DEFAULT 0,
+                            net_operating_income NUMERIC(14,2) NOT NULL DEFAULT 0,
+                            occupancy_rate NUMERIC(5,2) NOT NULL DEFAULT 0,
+                            collection_rate NUMERIC(5,2) NOT NULL DEFAULT 0,
+                            computed_at TIMESTAMPTZ,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            CONSTRAINT uq_financial_snapshot UNIQUE (owner_id, snapshot_period, property_id, unit_id)
+                        )
+                    """))
+                    db.execute(text("""
+                        CREATE TABLE IF NOT EXISTS expense_records (
+                            id UUID PRIMARY KEY,
+                            owner_id UUID NOT NULL REFERENCES users(id),
+                            property_id UUID REFERENCES properties(id),
+                            unit_id UUID REFERENCES units(id),
+                            category VARCHAR(50) NOT NULL,
+                            description VARCHAR(500) NOT NULL,
+                            amount NUMERIC(12,2) NOT NULL,
+                            expense_date DATE NOT NULL,
+                            vendor_job_id UUID REFERENCES vendor_jobs(id),
+                            receipt_url VARCHAR(500),
+                            notes TEXT,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                    """))
+                    db.execute(text("""
+                        CREATE TABLE IF NOT EXISTS profit_targets (
+                            id UUID PRIMARY KEY,
+                            owner_id UUID NOT NULL REFERENCES users(id),
+                            property_id UUID REFERENCES properties(id),
+                            target_type VARCHAR(30) NOT NULL,
+                            target_value NUMERIC(10,2) NOT NULL,
+                            period VARCHAR(10) NOT NULL DEFAULT 'monthly',
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                    """))
+                    db.execute(text("""
+                        CREATE TABLE IF NOT EXISTS financial_reports (
+                            id UUID PRIMARY KEY,
+                            owner_id UUID NOT NULL REFERENCES users(id),
+                            report_period VARCHAR(7) NOT NULL,
+                            report_type VARCHAR(20) NOT NULL DEFAULT 'monthly',
+                            status VARCHAR(20) NOT NULL DEFAULT 'generating',
+                            generated_at TIMESTAMPTZ,
+                            data JSONB,
+                            pdf_url VARCHAR(500),
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                    """))
+                    db.commit()
+                    logger.info("[OK] Profit Optimization Engine tables ensured")
+                except Exception as profit_err:
+                    logger.warning(f"[WARN] Profit Engine table creation: {profit_err}")
                     db.rollback()
 
                 # Automation / Autopilot enum types and schema

@@ -155,6 +155,16 @@ except ImportError:
     MaintenanceSchedule = None
     MaintenanceCostBudget = None
 
+try:
+    from app.models.profit_engine import (
+        FinancialSnapshot, ExpenseRecord, ProfitTarget, FinancialReport,
+    )
+except ImportError:
+    FinancialSnapshot = None
+    ExpenseRecord = None
+    ProfitTarget = None
+    FinancialReport = None
+
 __all__ = [
     "User",
     "UserRole",
