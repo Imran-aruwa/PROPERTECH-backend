@@ -135,13 +135,13 @@ except ImportError:
 
 try:
     from app.models.vacancy_prevention import (
-        VacancyLead, VacancyLeadActivity, ListingSyndication,
+        VacancyLead, VacancyLeadActivity, VacancyPreventionListing,
         RenewalCampaign, VacancyPreventionSettings,
     )
 except ImportError:
     VacancyLead = None
     VacancyLeadActivity = None
-    ListingSyndication = None
+    VacancyPreventionListing = None
     RenewalCampaign = None
     VacancyPreventionSettings = None
 

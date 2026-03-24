@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.models.vacancy_prevention import (
-    ListingSyndication,
+    VacancyPreventionListing as ListingSyndication,  # renamed to avoid table conflict
     RenewalCampaign,
     VacancyLead,
     VacancyLeadActivity,

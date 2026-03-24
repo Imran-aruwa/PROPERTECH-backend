@@ -67,12 +67,13 @@ class VacancyLeadActivity(Base):
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
 
 
-class ListingSyndication(Base):
+class VacancyPreventionListing(Base):
     """
     Vacancy Prevention listing — richer than the Feature #1 VacancyListing.
     Tracks per-platform syndication and lead metrics.
+    Renamed from ListingSyndication to avoid conflict with listing.py's table.
     """
-    __tablename__ = "listing_syndications"
+    __tablename__ = "vacancy_prevention_listings"
 
     id = Column(Uuid, primary_key=True, default=uuid.uuid4)
     owner_id = Column(Uuid, ForeignKey("users.id"), nullable=False, index=True)
