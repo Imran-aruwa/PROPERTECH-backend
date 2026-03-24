@@ -138,6 +138,8 @@ class Settings(BaseSettings):
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
     EMAIL_FROM: str = "noreply@propertechsoftware.com"
+    SMTP_FROM_EMAIL: str = "noreply@propertechsoftware.com"
+    SMTP_FROM_NAME: str = "PROPERTECH"
     SEND_EMAILS: bool = True
     
     # ==================== Features ====================

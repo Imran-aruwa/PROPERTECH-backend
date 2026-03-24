@@ -69,6 +69,8 @@ class User(Base):
     status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)  # active, inactive, suspended
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     phone_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    email_verification_token: Mapped[str] = mapped_column(String(255), nullable=True)
+    email_verification_token_expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     
     # Custom data
     user_metadata: Mapped[str] = mapped_column(Text, nullable=True)  # JSON string for custom data

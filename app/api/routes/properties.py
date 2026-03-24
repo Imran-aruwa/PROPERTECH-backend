@@ -10,6 +10,7 @@ from app.schemas.property import (
     PropertyCreate, PropertyResponse, PropertyUpdate,
     UnitCreate, UnitResponse, UnitUpdate
 )
+from app.services.plan_enforcement import check_property_limit, check_unit_limit
 
 router = APIRouter()
 
@@ -171,6 +172,9 @@ def create_property(
     current_user: User = Depends(get_current_user)
 ):
     """Create a new property with optional automatic unit generation"""
+    # Enforce plan limits
+    check_property_limit(current_user, db)
+
     property_data = property_in.dict()
 
     # Extract unit generation fields (not part of Property model)
@@ -339,6 +343,9 @@ def create_unit(
 ):
     """Add a unit to a property"""
     from app.models.user import UserRole
+
+    # Enforce plan limits
+    check_unit_limit(current_user, db)
 
     # Get property - allow access if user owns it OR if user is an owner role
     property = db.query(Property).filter(Property.id == property_id).first()

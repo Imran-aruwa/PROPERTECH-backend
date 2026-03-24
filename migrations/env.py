@@ -18,6 +18,12 @@ from app.database import DATABASE_URL
 from app.models import user, tenant, payment, property, maintenance, staff, attendance, meter
 from app.models import incident, equipment, task
 
+# Import newer models (try/except to not break older migrations)
+try:
+    from app.models import tenant_intelligence  # noqa: F401
+except ImportError:
+    pass
+
 # this is the Alembic Config object
 config = context.config
 

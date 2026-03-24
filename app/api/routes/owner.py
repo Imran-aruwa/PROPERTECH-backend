@@ -66,37 +66,10 @@ def get_owner_properties_with_fallback(db: Session, owner_id) -> list:
     if total_count == 0:
         return []
 
-    # Step 3: Properties exist but aren't linked - fix via raw SQL (bypasses UUID type issues)
-    try:
-        update_result = db.execute(
-            text("UPDATE properties SET user_id = CAST(:owner_id AS UUID)"),
-            {"owner_id": owner_id_str}
-        )
-        db.commit()
-        rows_updated = update_result.rowcount
-        logger.info(f"[OWNER] Raw SQL linked {rows_updated} properties to owner {owner_id_str}")
-    except Exception as e:
-        logger.error(f"[OWNER] Raw SQL update failed: {e}")
-        db.rollback()
-
-    # Step 4: Expire ORM cache and re-query so ORM picks up the SQL changes
-    db.expire_all()
-    properties = db.query(Property).filter(Property.user_id == owner_id).all()
-    logger.info(f"[OWNER] After SQL fix: {len(properties)} properties for owner")
-
-    # Step 5: If ORM filter still fails (extreme edge case), fetch all via raw SQL
-    if not properties:
-        logger.warning("[OWNER] ORM filter still empty after SQL fix, loading all properties directly")
-        rows = db.execute(text("SELECT id FROM properties")).fetchall()
-        if rows:
-            from sqlalchemy import cast
-            from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-            import uuid as uuid_module
-            prop_ids = [uuid_module.UUID(str(r[0])) for r in rows]
-            properties = db.query(Property).filter(Property.id.in_(prop_ids)).all()
-            logger.info(f"[OWNER] Direct ID load returned {len(properties)} properties")
-
-    return properties
+    # No unscoped fallback — a user with 0 properties simply has 0 properties.
+    # Never assign all DB properties to an arbitrary user (multi-tenant safety).
+    logger.info(f"[OWNER] Owner {owner_id_str} has no properties in DB")
+    return []
 
 
 @router.get("/dashboard")
@@ -297,19 +270,24 @@ def get_owner_dashboard(
         and_(Tenant.status == "active", Tenant.property_id.in_(property_ids))
     ).count() if property_ids else 0
 
-    # Pending payments with error handling
+    # Pending payments — scoped to owner's properties via tenant join
     try:
         pending_payments = db.query(func.sum(Payment.amount))\
-            .filter(Payment.status == PaymentStatus.PENDING)\
-            .scalar() or 0
+            .join(Tenant, Payment.tenant_id == Tenant.id)\
+            .filter(
+                Payment.status == PaymentStatus.PENDING,
+                Tenant.property_id.in_(property_ids)
+            ).scalar() or 0
     except Exception as pending_error:
         logger.error(f"[DASHBOARD] Pending payments query failed: {pending_error}")
         pending_payments = 0
 
-    # Recent activities (last 10 payments or maintenance)
+    # Recent activities (last 10 payments or maintenance) — scoped to owner's portfolio
     recent_activities = []
 
     recent_payments = db.query(Payment)\
+        .join(Tenant, Payment.tenant_id == Tenant.id)\
+        .filter(Tenant.property_id.in_(property_ids))\
         .order_by(desc(Payment.created_at))\
         .limit(5)\
         .all()
@@ -325,6 +303,7 @@ def get_owner_dashboard(
             pass
 
     recent_maintenance = db.query(MaintenanceRequest)\
+        .filter(MaintenanceRequest.property_id.in_(property_ids))\
         .order_by(desc(MaintenanceRequest.created_at))\
         .limit(5)\
         .all()

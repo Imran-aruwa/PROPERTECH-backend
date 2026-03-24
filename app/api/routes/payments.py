@@ -440,34 +440,56 @@ async def paystack_webhook(
         data = payload.get("data", {})
 
         if event == "charge.success":
-            # Payment was successful
             reference = data.get("reference")
-
             payment = db.query(Payment).filter(Payment.reference == reference).first()
             if payment:
                 payment.status = PaymentStatus.COMPLETED
                 payment.transaction_id = str(data.get("id", ""))
                 payment.paid_at = datetime.utcnow()
+
+                # Activate linked subscription if present
+                if payment.subscription_id:
+                    sub = db.query(Subscription).filter(
+                        Subscription.id == payment.subscription_id
+                    ).first()
+                    if sub:
+                        sub.status = SubscriptionStatus.ACTIVE
+                        sub.start_date = datetime.utcnow()
+                        sub.next_billing_date = datetime.utcnow() + timedelta(
+                            days=365 if sub.billing_cycle == "yearly" else 30
+                        )
+                        sub.payment_count = (sub.payment_count or 0) + 1
+                        sub.last_payment_date = datetime.utcnow()
+
                 db.commit()
 
-        elif event == "transfer.success":
-            # Transfer was successful
-            reference = data.get("reference")
-            # Handle transfer success
-
-        elif event == "subscription.create":
-            # New subscription created
-            pass
-
         elif event == "subscription.disable":
-            # Subscription disabled/cancelled
-            customer_code = data.get("customer", {}).get("customer_code")
-            # Find and update subscription
+            # Subscription disabled / cancelled by Paystack
+            gateway_sub_id = data.get("subscription_code") or data.get("id")
+            if gateway_sub_id:
+                sub = db.query(Subscription).filter(
+                    Subscription.gateway_subscription_id == str(gateway_sub_id)
+                ).first()
+                if sub:
+                    sub.status = SubscriptionStatus.CANCELLED
+                    sub.cancelled_at = datetime.utcnow()
+                    db.commit()
+
+        elif event == "invoice.payment_failed":
+            # Subscription renewal failed — increment failed_attempts; cancel after 3
+            gateway_sub_id = data.get("subscription", {}).get("subscription_code")
+            if gateway_sub_id:
+                sub = db.query(Subscription).filter(
+                    Subscription.gateway_subscription_id == str(gateway_sub_id)
+                ).first()
+                if sub:
+                    sub.failed_attempts = (sub.failed_attempts or 0) + 1
+                    if sub.failed_attempts >= 3:
+                        sub.status = SubscriptionStatus.CANCELLED
+                    db.commit()
 
         elif event == "charge.failed":
-            # Payment failed
             reference = data.get("reference")
-
             payment = db.query(Payment).filter(Payment.reference == reference).first()
             if payment:
                 payment.status = PaymentStatus.FAILED

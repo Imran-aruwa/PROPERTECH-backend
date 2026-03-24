@@ -101,20 +101,22 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # CORS: Cross-Origin Resource Sharing
 allowed_origins = [
+    # Production domains
+    "https://propertechsoftware.co.ke",
+    "https://www.propertechsoftware.co.ke",
+    "https://propertechsoftware.com",
+    "https://www.propertechsoftware.com",
+    # Configured frontend URL (from env)
     settings.FRONTEND_URL,
+    # Local development
     "http://localhost:3000",
     "http://localhost:3001",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:3001",
 ]
 
-
-# Add Railway frontend domains (support various Railway URL patterns)
-railway_patterns = [
-    "https://*.railway.app",
-    "https://*.up.railway.app",
-]
-
+# Deduplicate
+allowed_origins = list(dict.fromkeys(o for o in allowed_origins if o))
 
 if settings.DEBUG:
     allowed_origins.extend([
@@ -126,7 +128,8 @@ if settings.DEBUG:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_origin_regex=r"https://.*\.railway\.app",
+    # Also allow Railway subdomains and Vercel preview deployments
+    allow_origin_regex=r"https://(.*\.railway\.app|.*\.vercel\.app)",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
     allow_headers=["*"],
@@ -1500,6 +1503,13 @@ async def startup_event():
             _seed_db.close()
     except Exception as seed_insp_err:
         logger.warning(f"[WARN] Inspection template seeding failed: {seed_insp_err} — continuing anyway")
+
+    # Print plan summary and warn about missing Paystack plan codes
+    try:
+        from app.seeds.seed_plans import print_plan_summary
+        print_plan_summary()
+    except Exception as plans_err:
+        logger.warning(f"[WARN] Plan summary failed: {plans_err} — continuing anyway")
 
     logger.info("="*70)
     logger.info("[OK] Application startup complete!")
