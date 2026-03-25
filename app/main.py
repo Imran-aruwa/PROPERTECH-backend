@@ -9,6 +9,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+import asyncio
 import logging
 from datetime import datetime
 import traceback
@@ -276,21 +277,13 @@ async def status_check():
 # ==================== STARTUP & SHUTDOWN ====================
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Run on application startup"""
-    logger.info("="*70)
-    logger.info(f"Starting {settings.PROJECT_NAME} v{settings.VERSION}")
-    logger.info("="*70)
-    logger.info(f"Environment: {'Production' if not settings.DEBUG else 'Development'}")
-    logger.info(f"Frontend URL: {settings.FRONTEND_URL}")
-    logger.info(f"[AUTH CONFIG] SECRET_KEY (first 8 chars): {settings.SECRET_KEY[:8]}...")
-    logger.info(f"[AUTH CONFIG] ALGORITHM: {settings.ALGORITHM}")
-    logger.info(f"[AUTH CONFIG] TOKEN_EXPIRE: {settings.ACCESS_TOKEN_EXPIRE_MINUTES} minutes")
-    if settings.SECRET_KEY == "your-super-secret-key-change-this-in-production":
-        logger.warning("[AUTH CONFIG] WARNING: Using default SECRET_KEY! Set SECRET_KEY in environment variables.")
-
-    # Test database connection NON-BLOCKING
+def _run_blocking_startup():
+    """
+    All synchronous startup work — migrations, schema fixes, seeding.
+    Called via asyncio.to_thread() so the event loop stays free to serve
+    health-check requests while this runs in a background thread.
+    """
+    # Test database connection
     logger.info("Testing database connection...")
     try:
         if test_connection():
@@ -1512,8 +1505,28 @@ async def startup_event():
         logger.warning(f"[WARN] Plan summary failed: {plans_err} — continuing anyway")
 
     logger.info("="*70)
-    logger.info("[OK] Application startup complete!")
+    logger.info("[OK] Blocking startup tasks complete!")
     logger.info("="*70)
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Run on application startup — logs banner then offloads all blocking work to a thread."""
+    logger.info("="*70)
+    logger.info(f"Starting {settings.PROJECT_NAME} v{settings.VERSION}")
+    logger.info("="*70)
+    logger.info(f"Environment: {'Production' if not settings.DEBUG else 'Development'}")
+    logger.info(f"Frontend URL: {settings.FRONTEND_URL}")
+    logger.info(f"[AUTH CONFIG] SECRET_KEY (first 8 chars): {settings.SECRET_KEY[:8]}...")
+    logger.info(f"[AUTH CONFIG] ALGORITHM: {settings.ALGORITHM}")
+    logger.info(f"[AUTH CONFIG] TOKEN_EXPIRE: {settings.ACCESS_TOKEN_EXPIRE_MINUTES} minutes")
+    if settings.SECRET_KEY == "your-super-secret-key-change-this-in-production":
+        logger.warning("[AUTH CONFIG] WARNING: Using default SECRET_KEY! Set SECRET_KEY in environment variables.")
+
+    # Run all blocking DB/migration work in a thread pool so the event loop stays
+    # free to serve health-check requests while startup is in progress.
+    await asyncio.to_thread(_run_blocking_startup)
+    logger.info("[OK] Application startup complete!")
 
 
 @app.on_event("shutdown")
