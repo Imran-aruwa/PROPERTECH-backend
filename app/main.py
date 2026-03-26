@@ -228,28 +228,8 @@ async def root():
 
 @app.get("/health", tags=["System"])
 async def health_check():
-    """Health check endpoint for Railway/monitoring"""
-    try:
-        # Quick connection test (non-blocking)
-        connection_ok = test_connection()
-        
-        return {
-            "success": True,
-            "status": "healthy" if connection_ok else "degraded",
-            "database": "connected" if connection_ok else "disconnected",
-            "timestamp": datetime.utcnow().isoformat(),
-        }
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return JSONResponse(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            content={
-                "success": False,
-                "status": "unhealthy",
-                "error": str(e),
-                "timestamp": datetime.utcnow().isoformat()
-            }
-        )
+    """Health check endpoint for Railway/monitoring — always returns 200 immediately."""
+    return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
 
 
 @app.get("/status", tags=["System"])
