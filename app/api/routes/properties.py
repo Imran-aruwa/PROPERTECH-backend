@@ -48,14 +48,15 @@ def list_all_units(
     return units
 
 
-@router.get("/units/{unit_id}", response_model=UnitResponse)
+@router.get("/units/{unit_id}")
 def get_unit_by_id(
     unit_id: UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get a specific unit by ID"""
+    """Get a specific unit by ID, including current tenant info"""
     from app.models.user import UserRole
+    from app.models.tenant import Tenant
 
     unit = db.query(Unit).filter(Unit.id == unit_id).first()
 
@@ -63,16 +64,48 @@ def get_unit_by_id(
         raise HTTPException(status_code=404, detail="Unit not found")
 
     # Get property to check access
-    property = db.query(Property).filter(Property.id == unit.property_id).first()
+    prop = db.query(Property).filter(Property.id == unit.property_id).first()
     has_access = (
-        property and property.user_id == current_user.id or
+        prop and prop.user_id == current_user.id or
         current_user.role in [UserRole.OWNER, UserRole.AGENT, UserRole.ADMIN, UserRole.CARETAKER]
     )
 
     if not has_access:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    return unit
+    # Look up active tenant for this unit
+    tenant = db.query(Tenant).filter(
+        Tenant.unit_id == unit_id,
+        Tenant.status == "active"
+    ).first()
+
+    return {
+        "id": str(unit.id),
+        "unit_number": unit.unit_number,
+        "bedrooms": unit.bedrooms,
+        "bathrooms": unit.bathrooms,
+        "toilets": unit.toilets,
+        "square_feet": unit.square_feet,
+        "monthly_rent": unit.monthly_rent,
+        "status": unit.status,
+        "has_master_bedroom": unit.has_master_bedroom,
+        "has_servant_quarters": unit.has_servant_quarters,
+        "sq_bathrooms": unit.sq_bathrooms,
+        "occupancy_type": unit.occupancy_type,
+        "description": unit.description,
+        "property_id": str(unit.property_id),
+        "floor": getattr(unit, "floor", None),
+        "size_sqm": getattr(unit, "size_sqm", None),
+        "created_at": unit.created_at.isoformat() if unit.created_at else None,
+        "property": {"id": str(prop.id), "name": prop.name, "address": prop.address} if prop else None,
+        "tenant": {
+            "id": str(tenant.id),
+            "full_name": tenant.full_name,
+            "email": tenant.email,
+            "phone": tenant.phone,
+            "balance_due": tenant.balance_due or 0,
+        } if tenant else None,
+    }
 
 
 @router.put("/units/{unit_id}", response_model=UnitResponse)

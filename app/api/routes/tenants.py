@@ -251,15 +251,16 @@ def list_tenants(
         owner_properties = db.query(Property).filter(Property.user_id == current_user.id).all()
         property_ids = [p.id for p in owner_properties]
         if property_ids:
-            # Also catch tenants whose property_id is NULL but unit belongs to owner's properties
+            # Catch tenants linked by property_id OR by unit_id (covers data where
+            # property_id may be stale/null but unit_id correctly points to owner's unit)
             owner_unit_ids = [
                 u.id for u in db.query(Unit).filter(Unit.property_id.in_(property_ids)).all()
             ]
+            filter_conditions = [Tenant.property_id.in_(property_ids)]
+            if owner_unit_ids:
+                filter_conditions.append(Tenant.unit_id.in_(owner_unit_ids))
             tenants = db.query(Tenant).filter(
-                or_(
-                    Tenant.property_id.in_(property_ids),
-                    and_(Tenant.property_id.is_(None), Tenant.unit_id.in_(owner_unit_ids))
-                )
+                or_(*filter_conditions)
             ).offset(skip).limit(limit).all()
         else:
             tenants = []
