@@ -83,33 +83,37 @@ def signup(user_in: UserCreate, db: Session = Depends(get_db)):
         except ValueError:
             user_role = UserRole.OWNER
 
-        # Create user — auto-verified until SMTP is configured
+        # Generate email verification token
+        verification_token = secrets.token_urlsafe(32)
+        token_expires = datetime.utcnow() + timedelta(hours=24)
+
+        # Create user
         user = User(
             id=uuid.uuid4(),
             email=user_in.email,
             full_name=user_in.get_full_name(),
             hashed_password=get_password_hash(user_in.password),
             role=user_role,
-            email_verified=True,
-            email_verification_token=None,
-            email_verification_token_expires_at=None,
+            email_verified=False,
+            email_verification_token=verification_token,
+            email_verification_token_expires_at=token_expires,
         )
         db.add(user)
         db.commit()
         db.refresh(user)
 
-        # Email verification temporarily disabled until SMTP is configured
-        # try:
-        #     email_service.send_verification_email(
-        #         to_email=user.email,
-        #         user_name=user.full_name or "",
-        #         verification_token=verification_token,
-        #     )
-        # except Exception as mail_err:
-        #     logger.error("[signup] Email send failed for %s: %s", user.email, mail_err)
+        # Send verification email — wrapped so a mail failure never breaks registration
+        try:
+            email_service.send_verification_email(
+                to_email=user.email,
+                user_name=user.full_name or "",
+                verification_token=verification_token,
+            )
+        except Exception as mail_err:
+            logger.error("[signup] Email send failed for %s: %s", user.email, mail_err)
 
         return {
-            "message": "Registration successful. You can now log in.",
+            "message": "Registration successful. Please check your email to verify your account.",
             "email": user.email,
         }
 
@@ -232,12 +236,12 @@ def login(user_credentials: UserLogin, db: Session = Depends(get_db)):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Email verification temporarily disabled until SMTP is configured
-    # if not user.email_verified:
-    #     raise HTTPException(
-    #         status_code=403,
-    #         detail="Please verify your email address before logging in. Check your inbox for the verification link.",
-    #     )
+    # Email verification gate
+    if not user.email_verified:
+        raise HTTPException(
+            status_code=403,
+            detail="Please verify your email address before logging in. Check your inbox for the verification link.",
+        )
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 

@@ -4,13 +4,66 @@ Sends transactional emails using SMTP (Gmail / any SMTP provider).
 Dev-safe: if SMTP is not configured, logs the email content instead of raising.
 """
 import logging
+import os
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-from app.core.config import settings
-
 logger = logging.getLogger(__name__)
+
+
+def _get_smtp_config() -> dict:
+    """
+    Read SMTP config from environment variables with fallbacks.
+    Checks both common naming conventions (SMTP_SERVER / SMTP_HOST, etc.)
+    so the service works regardless of which name the host platform uses.
+    """
+    from app.core.config import settings
+
+    host = (
+        os.environ.get("SMTP_SERVER")
+        or os.environ.get("SMTP_HOST")
+        or settings.SMTP_SERVER
+        or "smtp.gmail.com"
+    )
+    port = int(
+        os.environ.get("SMTP_PORT")
+        or settings.SMTP_PORT
+        or 587
+    )
+    user = (
+        os.environ.get("SMTP_USER")
+        or os.environ.get("SMTP_USERNAME")
+        or settings.SMTP_USER
+        or ""
+    )
+    password = (
+        os.environ.get("SMTP_PASSWORD")
+        or os.environ.get("SMTP_PASS")
+        or settings.SMTP_PASSWORD
+        or ""
+    )
+    from_email = (
+        os.environ.get("SMTP_FROM_EMAIL")
+        or os.environ.get("FROM_EMAIL")
+        or os.environ.get("EMAIL_FROM")
+        or settings.SMTP_FROM_EMAIL
+        or "noreply@propertechsoftware.com"
+    )
+    from_name = (
+        os.environ.get("SMTP_FROM_NAME")
+        or settings.SMTP_FROM_NAME
+        or "PROPERTECH"
+    )
+    return {
+        "host": host,
+        "port": port,
+        "user": user,
+        "password": password,
+        "from_email": from_email,
+        "from_name": from_name,
+        "configured": bool(user and password),
+    }
 
 
 class EmailService:
@@ -22,9 +75,12 @@ class EmailService:
         Returns True on success, False (with a log) on failure.
         Never raises — callers must not let email errors break registration / login.
         """
-        if not settings.email_configured:
+        cfg = _get_smtp_config()
+
+        if not cfg["configured"]:
             logger.warning(
-                "[EmailService] SMTP not configured — email NOT sent to %s | subject: %s",
+                "[EmailService] SMTP not configured (SMTP_USER/SMTP_PASSWORD missing) "
+                "— email NOT sent to %s | subject: %s",
                 to_email, subject,
             )
             logger.debug("[EmailService] text body:\n%s", text_body)
@@ -33,28 +89,44 @@ class EmailService:
         try:
             msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
-            msg["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>"
+            msg["From"] = f"{cfg['from_name']} <{cfg['from_email']}>"
             msg["To"] = to_email
 
             msg.attach(MIMEText(text_body, "plain"))
             msg.attach(MIMEText(html_body, "html"))
 
-            smtp_host = settings.SMTP_SERVER
-            smtp_port = settings.SMTP_PORT
-            smtp_user = settings.SMTP_USER
-            smtp_pass = settings.SMTP_PASSWORD
+            logger.info(
+                "[EmailService] Sending '%s' to %s via %s:%s as %s",
+                subject, to_email, cfg["host"], cfg["port"], cfg["user"],
+            )
 
-            with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
+            with smtplib.SMTP(cfg["host"], cfg["port"], timeout=10) as server:
                 server.ehlo()
                 server.starttls()
-                server.login(smtp_user, smtp_pass)
+                server.ehlo()
+                server.login(cfg["user"], cfg["password"])
                 server.sendmail(msg["From"], [to_email], msg.as_string())
 
-            logger.info("[EmailService] Sent '%s' to %s", subject, to_email)
+            logger.info("[EmailService] Successfully sent '%s' to %s", subject, to_email)
             return True
 
+        except smtplib.SMTPAuthenticationError as exc:
+            logger.error(
+                "[EmailService] AUTH FAILED sending '%s' to %s — check SMTP_USER/SMTP_PASSWORD: %s",
+                subject, to_email, exc,
+            )
+            return False
+        except smtplib.SMTPException as exc:
+            logger.error(
+                "[EmailService] SMTP error sending '%s' to %s: %s",
+                subject, to_email, exc,
+            )
+            return False
         except Exception as exc:
-            logger.error("[EmailService] Failed to send '%s' to %s: %s", subject, to_email, exc)
+            logger.error(
+                "[EmailService] Unexpected error sending '%s' to %s: %s",
+                subject, to_email, exc,
+            )
             return False
 
     # ------------------------------------------------------------------ #
@@ -63,6 +135,7 @@ class EmailService:
 
     def send_verification_email(self, to_email: str, user_name: str, verification_token: str) -> bool:
         """Send branded HTML verification email with a 24-hour expiry link."""
+        from app.core.config import settings
         frontend_url = settings.FRONTEND_URL.rstrip("/")
         verify_url = f"{frontend_url}/verify-email?token={verification_token}"
         display_name = user_name or to_email.split("@")[0]
@@ -155,6 +228,7 @@ class EmailService:
 
     def send_welcome_email(self, to_email: str, user_name: str) -> bool:
         """Send a welcome email after successful email verification."""
+        from app.core.config import settings
         frontend_url = settings.FRONTEND_URL.rstrip("/")
         login_url = f"{frontend_url}/login"
         display_name = user_name or to_email.split("@")[0]
@@ -187,7 +261,7 @@ class EmailService:
           <tr>
             <td style="padding:40px;">
               <h2 style="margin:0 0 12px;color:#111827;font-size:22px;font-weight:700;">
-                Welcome aboard, {display_name}! 🎉
+                Welcome aboard, {display_name}!
               </h2>
               <p style="margin:0 0 20px;color:#6b7280;font-size:15px;line-height:1.6;">
                 Your email has been verified and your PROPERTECH account is now fully active.
