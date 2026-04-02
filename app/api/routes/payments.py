@@ -11,7 +11,7 @@ import httpx
 from datetime import datetime, timedelta
 
 from app.database import get_db
-from app.models.payment import Payment, Subscription, PaymentStatus, SubscriptionStatus, SubscriptionPlan, PaymentGateway, PaymentCurrency
+from app.models.payment import Payment, Subscription, PaymentStatus, SubscriptionStatus, SubscriptionPlan, PaymentGateway, PaymentCurrency, PaymentMethod
 from app.schemas.payment import (
     InitiatePaymentRequest,
     InitiatePaymentResponse,
@@ -27,6 +27,7 @@ PAYSTACK_BASE_URL = "https://api.paystack.co"
 PAYSTACK_SECRET_KEY = settings.PAYSTACK_SECRET_KEY
 
 
+@router.post("/initialize", response_model=InitiatePaymentResponse)
 @router.post("/initiate", response_model=InitiatePaymentResponse)
 async def initiate_payment(
     payload: InitiatePaymentRequest,
@@ -53,7 +54,7 @@ async def initiate_payment(
             amount=payload.amount,
             currency=currency,
             gateway="paystack",
-            method=payload.method or "card",
+            method=payload.method or PaymentMethod.KES_CARD,
             reference=reference,
             plan_id=payload.plan_id,
             user_country=payload.country_code,
@@ -75,11 +76,12 @@ async def initiate_payment(
                     "amount": amount_in_kobo,
                     "currency": currency,
                     "reference": reference,
-                    "callback_url": f"{settings.FRONTEND_URL}/payment/callback",
+                    "callback_url": f"{settings.FRONTEND_URL}/payment/verify",
                     "metadata": {
                         "user_id": str(current_user.id),
                         "plan_id": payload.plan_id,
                         "payment_id": str(payment.id),
+                        "billing_cycle": payload.billing_cycle or "monthly",
                     }
                 },
                 headers={
@@ -156,15 +158,58 @@ async def verify_payment(
             if result.get("status") and result.get("data", {}).get("status") == "success":
                 payment.status = PaymentStatus.COMPLETED
                 payment.paid_at = datetime.utcnow()
+
+                # Activate subscription if this payment is for a plan
+                plan_id = payment.plan_id or result.get("data", {}).get("metadata", {}).get("plan_id")
+                subscription_record = None
+                if plan_id and plan_id in ("starter", "professional", "enterprise"):
+                    plan_map = {
+                        "starter": SubscriptionPlan.STARTER,
+                        "professional": SubscriptionPlan.PROFESSIONAL,
+                        "enterprise": SubscriptionPlan.ENTERPRISE,
+                    }
+                    # Cancel any existing active subscription
+                    existing = db.query(Subscription).filter(
+                        Subscription.user_id == current_user.id,
+                        Subscription.status == SubscriptionStatus.ACTIVE,
+                    ).first()
+                    if existing:
+                        existing.status = SubscriptionStatus.CANCELLED
+                        existing.cancelled_at = datetime.utcnow()
+
+                    paystack_amount = result.get("data", {}).get("amount", 0) / 100
+                    billing_cycle = result.get("data", {}).get("metadata", {}).get("billing_cycle", "monthly")
+                    subscription_record = Subscription(
+                        id=uuid.uuid4(),
+                        user_id=current_user.id,
+                        plan=plan_map[plan_id],
+                        status=SubscriptionStatus.ACTIVE,
+                        currency=PaymentCurrency.KES,
+                        billing_cycle=billing_cycle,
+                        amount=paystack_amount or payment.amount,
+                        gateway=PaymentGateway.PAYSTACK,
+                        gateway_subscription_id=payload.reference,
+                        start_date=datetime.utcnow(),
+                        next_billing_date=datetime.utcnow() + timedelta(days=30 if billing_cycle == "monthly" else 365),
+                    )
+                    db.add(subscription_record)
+
                 db.commit()
-                
-                return {
+
+                resp = {
                     "success": True,
                     "status": "success",
                     "message": "Payment verified successfully",
-                    "payment_id": str(payment.id)
+                    "payment_id": str(payment.id),
                 }
-        
+                if subscription_record:
+                    resp["subscription"] = {
+                        "id": str(subscription_record.id),
+                        "plan": subscription_record.plan.value,
+                        "status": subscription_record.status.value,
+                    }
+                return resp
+
         raise HTTPException(status_code=400, detail="Payment verification failed")
     
     except HTTPException:

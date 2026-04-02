@@ -66,6 +66,7 @@ class DetectGatewayResponse(BaseModel):
 class InitiatePaymentRequest(BaseModel):
     amount: float = Field(..., gt=0, description="Payment amount")
     plan_id: Optional[str] = Field(None, description="Plan ID (starter, professional, enterprise)")
+    billing_cycle: Optional[str] = Field(None, description="monthly or yearly")
     gateway: Optional[PaymentGatewayEnum] = None
     currency: Optional[CurrencyEnum] = None
     method: Optional[PaymentMethodEnum] = None
