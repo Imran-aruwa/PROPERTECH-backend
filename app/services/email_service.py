@@ -1,169 +1,140 @@
 """
 PROPERTECH Email Service
 Sends transactional emails using SMTP (Gmail / any SMTP provider).
-Dev-safe: if SMTP is not configured, logs the email content instead of raising.
 """
-import logging
 import os
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-logger = logging.getLogger(__name__)
+# ── SMTP config — checks all common env var naming conventions ───────────────
+SMTP_HOST = (
+    os.environ.get("SMTP_HOST")
+    or os.environ.get("SMTP_SERVER")
+    or os.environ.get("MAIL_SERVER")
+    or "smtp.gmail.com"
+)
+SMTP_PORT = int(
+    os.environ.get("SMTP_PORT")
+    or os.environ.get("MAIL_PORT")
+    or 587
+)
+SMTP_USER = (
+    os.environ.get("SMTP_USER")
+    or os.environ.get("SMTP_USERNAME")
+    or os.environ.get("MAIL_USERNAME")
+    or ""
+)
+SMTP_PASSWORD = (
+    os.environ.get("SMTP_PASSWORD")
+    or os.environ.get("MAIL_PASSWORD")
+    or ""
+)
+SMTP_FROM_EMAIL = (
+    os.environ.get("SMTP_FROM_EMAIL")
+    or os.environ.get("FROM_EMAIL")
+    or os.environ.get("MAIL_FROM")
+    or SMTP_USER
+)
+SMTP_FROM_NAME = (
+    os.environ.get("SMTP_FROM_NAME")
+    or "ProperTech Software"
+)
+FRONTEND_URL = (
+    os.environ.get("FRONTEND_URL")
+    or "https://www.propertechsoftware.com"
+)
 
-
-def _get_smtp_config() -> dict:
-    """
-    Read SMTP config from environment variables with fallbacks.
-    Checks both common naming conventions (SMTP_SERVER / SMTP_HOST, etc.)
-    so the service works regardless of which name the host platform uses.
-    """
-    from app.core.config import settings
-
-    host = (
-        os.environ.get("SMTP_SERVER")
-        or os.environ.get("SMTP_HOST")
-        or settings.SMTP_SERVER
-        or "smtp.gmail.com"
-    )
-    port = int(
-        os.environ.get("SMTP_PORT")
-        or settings.SMTP_PORT
-        or 587
-    )
-    user = (
-        os.environ.get("SMTP_USER")
-        or os.environ.get("SMTP_USERNAME")
-        or settings.SMTP_USER
-        or ""
-    )
-    password = (
-        os.environ.get("SMTP_PASSWORD")
-        or os.environ.get("SMTP_PASS")
-        or settings.SMTP_PASSWORD
-        or ""
-    )
-    from_email = (
-        os.environ.get("SMTP_FROM_EMAIL")
-        or os.environ.get("FROM_EMAIL")
-        or os.environ.get("EMAIL_FROM")
-        or settings.SMTP_FROM_EMAIL
-        or "noreply@propertechsoftware.com"
-    )
-    from_name = (
-        os.environ.get("SMTP_FROM_NAME")
-        or settings.SMTP_FROM_NAME
-        or "PROPERTECH"
-    )
-    return {
-        "host": host,
-        "port": port,
-        "user": user,
-        "password": password,
-        "from_email": from_email,
-        "from_name": from_name,
-        "configured": bool(user and password),
-    }
-
-
-class EmailService:
-    """Transactional email sender for PROPERTECH."""
-
-    def _send(self, to_email: str, subject: str, html_body: str, text_body: str) -> bool:
-        """
-        Internal send helper.
-        Returns True on success, False (with a log) on failure.
-        Never raises — callers must not let email errors break registration / login.
-        """
-        cfg = _get_smtp_config()
-
-        if not cfg["configured"]:
-            logger.warning(
-                "[EmailService] SMTP not configured (SMTP_USER/SMTP_PASSWORD missing) "
-                "— email NOT sent to %s | subject: %s",
-                to_email, subject,
-            )
-            logger.debug("[EmailService] text body:\n%s", text_body)
-            return False
-
-        try:
-            msg = MIMEMultipart("alternative")
-            msg["Subject"] = subject
-            msg["From"] = f"{cfg['from_name']} <{cfg['from_email']}>"
-            msg["To"] = to_email
-
-            msg.attach(MIMEText(text_body, "plain"))
-            msg.attach(MIMEText(html_body, "html"))
-
-            logger.info(
-                "[EmailService] Sending '%s' to %s via %s:%s as %s",
-                subject, to_email, cfg["host"], cfg["port"], cfg["user"],
-            )
-
-            with smtplib.SMTP(cfg["host"], cfg["port"], timeout=10) as server:
-                server.ehlo()
-                server.starttls()
-                server.ehlo()
-                server.login(cfg["user"], cfg["password"])
-                server.sendmail(msg["From"], [to_email], msg.as_string())
-
-            logger.info("[EmailService] Successfully sent '%s' to %s", subject, to_email)
-            return True
-
-        except smtplib.SMTPAuthenticationError as exc:
-            logger.error(
-                "[EmailService] AUTH FAILED sending '%s' to %s — check SMTP_USER/SMTP_PASSWORD: %s",
-                subject, to_email, exc,
-            )
-            return False
-        except smtplib.SMTPException as exc:
-            logger.error(
-                "[EmailService] SMTP error sending '%s' to %s: %s",
-                subject, to_email, exc,
-            )
-            return False
-        except Exception as exc:
-            logger.error(
-                "[EmailService] Unexpected error sending '%s' to %s: %s",
-                subject, to_email, exc,
-            )
-            return False
-
-    # ------------------------------------------------------------------ #
-    #  Public methods                                                       #
-    # ------------------------------------------------------------------ #
-
-    def send_verification_email(self, to_email: str, user_name: str, verification_token: str) -> bool:
-        """Send branded HTML verification email with a 24-hour expiry link."""
+# Lazy-load from pydantic settings as fallback if env vars are empty
+def _load_from_settings() -> None:
+    """Pull SMTP values from pydantic settings into module globals if still unset."""
+    global SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM_EMAIL, SMTP_FROM_NAME, FRONTEND_URL
+    try:
         from app.core.config import settings
-        frontend_url = settings.FRONTEND_URL.rstrip("/")
-        verify_url = f"{frontend_url}/verify-email?token={verification_token}"
-        display_name = user_name or to_email.split("@")[0]
+        if not SMTP_USER:
+            SMTP_USER = settings.SMTP_USER or ""
+        if not SMTP_PASSWORD:
+            SMTP_PASSWORD = settings.SMTP_PASSWORD or ""
+        if SMTP_HOST == "smtp.gmail.com" and settings.SMTP_SERVER:
+            SMTP_HOST = settings.SMTP_SERVER
+        if not SMTP_FROM_EMAIL or SMTP_FROM_EMAIL == SMTP_USER:
+            SMTP_FROM_EMAIL = settings.SMTP_FROM_EMAIL or SMTP_USER
+        if SMTP_FROM_NAME == "ProperTech Software" and settings.SMTP_FROM_NAME:
+            SMTP_FROM_NAME = settings.SMTP_FROM_NAME
+        if FRONTEND_URL == "https://www.propertechsoftware.com" and settings.FRONTEND_URL:
+            FRONTEND_URL = settings.FRONTEND_URL
+    except Exception:
+        pass
 
-        subject = "Verify your PROPERTECH account"
 
-        html_body = f"""<!DOCTYPE html>
+# ── Core send function ────────────────────────────────────────────────────────
+
+def send_email(to_email: str, subject: str, html_content: str) -> bool:
+    """Send an HTML email. Returns True on success, False on failure."""
+    _load_from_settings()
+
+    print(f"[EMAIL] Attempting to send to {to_email}")
+    print(f"[EMAIL] SMTP_HOST={SMTP_HOST}, SMTP_PORT={SMTP_PORT}")
+    print(f"[EMAIL] SMTP_USER={SMTP_USER}")
+    print(f"[EMAIL] FROM={SMTP_FROM_EMAIL}")
+
+    if not SMTP_USER or not SMTP_PASSWORD:
+        print("[EMAIL ERROR] SMTP_USER or SMTP_PASSWORD not configured!")
+        return False
+
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_FROM_EMAIL}>"
+        msg["To"] = to_email
+
+        msg.attach(MIMEText(html_content, "html"))
+
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(SMTP_FROM_EMAIL, to_email, msg.as_string())
+
+        print(f"[EMAIL] Successfully sent to {to_email}")
+        return True
+
+    except smtplib.SMTPAuthenticationError as e:
+        print(f"[EMAIL ERROR] Authentication failed — check SMTP_USER and SMTP_PASSWORD: {e}")
+        return False
+    except smtplib.SMTPException as e:
+        print(f"[EMAIL ERROR] SMTP error: {e}")
+        return False
+    except Exception as e:
+        print(f"[EMAIL ERROR] Unexpected error: {e}")
+        return False
+
+
+# ── Transactional email helpers ───────────────────────────────────────────────
+
+def send_verification_email(to_email: str, token: str) -> bool:
+    """Send a branded verification email with a 24-hour expiry link."""
+    _load_from_settings()
+    verify_url = f"{FRONTEND_URL.rstrip('/')}/verify-email?token={token}"
+
+    html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Verify Your Email</title>
+  <title>Verify your ProperTech account</title>
 </head>
 <body style="margin:0;padding:0;background:#f0f4ff;font-family:Arial,Helvetica,sans-serif;">
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4ff;padding:40px 0;">
     <tr>
       <td align="center">
         <table width="560" cellpadding="0" cellspacing="0"
-               style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.08);">
-          <!-- Header -->
+               style="background:#ffffff;border-radius:12px;overflow:hidden;
+                      box-shadow:0 4px 20px rgba(0,0,0,0.08);">
           <tr>
             <td style="background:#2563eb;padding:32px;text-align:center;">
-              <div style="display:inline-flex;align-items:center;justify-content:center;
-                          width:56px;height:56px;background:rgba(255,255,255,0.2);
-                          border-radius:50%;margin-bottom:16px;">
-                <span style="color:#ffffff;font-size:28px;font-weight:900;line-height:1;">P</span>
-              </div>
-              <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:700;letter-spacing:-0.5px;">
+              <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:700;">
                 PROPERTECH
               </h1>
               <p style="margin:4px 0 0;color:rgba(255,255,255,0.75);font-size:13px;">
@@ -171,40 +142,40 @@ class EmailService:
               </p>
             </td>
           </tr>
-          <!-- Body -->
           <tr>
             <td style="padding:40px 40px 32px;">
               <h2 style="margin:0 0 12px;color:#111827;font-size:20px;font-weight:700;">
-                Hi {display_name}, verify your email
+                Verify your email address
               </h2>
               <p style="margin:0 0 24px;color:#6b7280;font-size:15px;line-height:1.6;">
-                Thank you for creating a PROPERTECH account. Click the button below to verify
-                your email address and activate your account.
+                Thank you for signing up! Please verify your email address to activate
+                your account and start managing your properties.
               </p>
               <div style="text-align:center;margin:32px 0;">
                 <a href="{verify_url}"
                    style="display:inline-block;background:#2563eb;color:#ffffff;
                           font-size:15px;font-weight:600;padding:14px 36px;
-                          border-radius:8px;text-decoration:none;letter-spacing:0.2px;">
+                          border-radius:8px;text-decoration:none;">
                   Verify My Email
                 </a>
               </div>
-              <p style="margin:0 0 8px;color:#6b7280;font-size:13px;line-height:1.5;">
-                This link expires in <strong>24 hours</strong>. If you did not create an account,
-                you can safely ignore this email.
+              <p style="margin:0 0 8px;color:#6b7280;font-size:13px;">
+                Or copy and paste this link into your browser:
               </p>
-              <p style="margin:0;color:#9ca3af;font-size:12px;word-break:break-all;">
-                If the button doesn't work, copy and paste this URL into your browser:<br/>
+              <p style="margin:0;color:#6366f1;font-size:13px;word-break:break-all;">
                 {verify_url}
+              </p>
+              <p style="margin:24px 0 0;color:#9ca3af;font-size:13px;text-align:center;">
+                This link expires in <strong>24 hours</strong>. If you did not create an
+                account, please ignore this email.
               </p>
             </td>
           </tr>
-          <!-- Footer -->
           <tr>
             <td style="background:#f9fafb;padding:20px 40px;border-top:1px solid #e5e7eb;">
               <p style="margin:0;color:#9ca3af;font-size:12px;text-align:center;">
-                &copy; 2025 PROPERTECH SOFTWARE. All rights reserved.<br/>
-                Nairobi, Kenya
+                &copy; 2026 ProperTech Software. All rights reserved.<br/>
+                Modern property management for Kenyan landlords and agents.
               </p>
             </td>
           </tr>
@@ -215,27 +186,20 @@ class EmailService:
 </body>
 </html>"""
 
-        text_body = (
-            f"Hi {display_name},\n\n"
-            "Please verify your PROPERTECH account by visiting the link below:\n\n"
-            f"{verify_url}\n\n"
-            "This link expires in 24 hours.\n\n"
-            "If you did not create an account, please ignore this email.\n\n"
-            "— The PROPERTECH Team"
-        )
+    return send_email(
+        to_email=to_email,
+        subject="Verify your ProperTech account",
+        html_content=html_content,
+    )
 
-        return self._send(to_email, subject, html_body, text_body)
 
-    def send_welcome_email(self, to_email: str, user_name: str) -> bool:
-        """Send a welcome email after successful email verification."""
-        from app.core.config import settings
-        frontend_url = settings.FRONTEND_URL.rstrip("/")
-        login_url = f"{frontend_url}/login"
-        display_name = user_name or to_email.split("@")[0]
+def send_welcome_email(to_email: str, user_name: str = "") -> bool:
+    """Send a welcome email after successful email verification."""
+    _load_from_settings()
+    login_url = f"{FRONTEND_URL.rstrip('/')}/login"
+    display_name = user_name or to_email.split("@")[0]
 
-        subject = "Welcome to PROPERTECH — your account is active!"
-
-        html_body = f"""<!DOCTYPE html>
+    html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -247,14 +211,10 @@ class EmailService:
     <tr>
       <td align="center">
         <table width="560" cellpadding="0" cellspacing="0"
-               style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.08);">
+               style="background:#ffffff;border-radius:12px;overflow:hidden;
+                      box-shadow:0 4px 20px rgba(0,0,0,0.08);">
           <tr>
             <td style="background:#2563eb;padding:32px;text-align:center;">
-              <div style="display:inline-flex;align-items:center;justify-content:center;
-                          width:56px;height:56px;background:rgba(255,255,255,0.2);
-                          border-radius:50%;margin-bottom:16px;">
-                <span style="color:#ffffff;font-size:28px;font-weight:900;line-height:1;">P</span>
-              </div>
               <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:700;">PROPERTECH</h1>
             </td>
           </tr>
@@ -280,7 +240,7 @@ class EmailService:
           <tr>
             <td style="background:#f9fafb;padding:20px 40px;border-top:1px solid #e5e7eb;">
               <p style="margin:0;color:#9ca3af;font-size:12px;text-align:center;">
-                &copy; 2025 PROPERTECH SOFTWARE. All rights reserved.
+                &copy; 2026 ProperTech Software. All rights reserved.
               </p>
             </td>
           </tr>
@@ -291,15 +251,26 @@ class EmailService:
 </body>
 </html>"""
 
-        text_body = (
-            f"Welcome to PROPERTECH, {display_name}!\n\n"
-            "Your email has been verified and your account is now active.\n\n"
-            f"Log in here: {login_url}\n\n"
-            "— The PROPERTECH Team"
-        )
-
-        return self._send(to_email, subject, html_body, text_body)
+    return send_email(
+        to_email=to_email,
+        subject="Welcome to PROPERTECH — your account is active!",
+        html_content=html_content,
+    )
 
 
-# Singleton
-email_service = EmailService()
+# ── Legacy class wrapper so any code importing `email_service` still works ───
+
+class _EmailServiceCompat:
+    """Thin compatibility shim — delegates to module-level functions."""
+
+    def send_verification_email(self, to_email: str, user_name: str = "", verification_token: str = "") -> bool:
+        return send_verification_email(to_email, verification_token)
+
+    def send_welcome_email(self, to_email: str, user_name: str = "") -> bool:
+        return send_welcome_email(to_email, user_name)
+
+    def _send(self, to_email: str, subject: str, html_body: str, text_body: str) -> bool:
+        return send_email(to_email, subject, html_body)
+
+
+email_service = _EmailServiceCompat()

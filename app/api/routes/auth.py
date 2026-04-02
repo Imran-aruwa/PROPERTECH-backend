@@ -23,7 +23,7 @@ from app.core.security import (
 )
 from app.dependencies import get_current_user
 from app.core.config import settings
-from app.services.email_service import email_service
+from app.services.email_service import send_verification_email, send_welcome_email
 
 logger = logging.getLogger(__name__)
 
@@ -102,19 +102,24 @@ def signup(user_in: UserCreate, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(user)
 
-        # Send verification email — wrapped so a mail failure never breaks registration
+        # Send verification email — wrapped so a mail failure never blocks registration
+        email_sent = False
         try:
-            email_service.send_verification_email(
-                to_email=user.email,
-                user_name=user.full_name or "",
-                verification_token=verification_token,
-            )
+            email_sent = send_verification_email(user.email, verification_token)
         except Exception as mail_err:
             logger.error("[signup] Email send failed for %s: %s", user.email, mail_err)
+            print(f"[SIGNUP WARNING] Failed to send verification email to {user.email}: {mail_err}")
 
         return {
-            "message": "Registration successful. Please check your email to verify your account.",
+            "message": "Account created successfully",
             "email": user.email,
+            "user_id": str(user.id),
+            "email_sent": email_sent,
+            "detail": (
+                "Please check your email to verify your account"
+                if email_sent else
+                "Account created but verification email could not be sent. Use resend-verification or contact support."
+            ),
         }
 
     except HTTPException:
@@ -169,10 +174,7 @@ def verify_email(
 
     # Send welcome email (best-effort)
     try:
-        email_service.send_welcome_email(
-            to_email=user.email,
-            user_name=user.full_name or "",
-        )
+        send_welcome_email(user.email, user.full_name or "")
     except Exception as mail_err:
         logger.error("[verify_email] Welcome email failed for %s: %s", user.email, mail_err)
 
@@ -201,11 +203,7 @@ def resend_verification(body: ResendVerificationBody, db: Session = Depends(get_
         db.commit()
 
         try:
-            email_service.send_verification_email(
-                to_email=user.email,
-                user_name=user.full_name or "",
-                verification_token=new_token,
-            )
+            send_verification_email(user.email, new_token)
         except Exception as mail_err:
             logger.error(
                 "[resend_verification] Email send failed for %s: %s", user.email, mail_err
