@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 def _frontend_url() -> str:
-    return os.getenv("FRONTEND_URL", "https://propertechsoftware.com").rstrip("/")
+    return os.getenv("FRONTEND_URL", "https://propertechsoftware.co.ke").rstrip("/")
 
 
 # ── Platform handlers ──────────────────────────────────────────────────────────

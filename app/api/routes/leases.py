@@ -737,7 +737,7 @@ def send_lease(
         from app.core.config import settings
         frontend_url = settings.FRONTEND_URL.rstrip("/")
     except Exception:
-        frontend_url = os.getenv("FRONTEND_URL", "https://propertechsoftware.com")
+        frontend_url = os.getenv("FRONTEND_URL", "https://propertechsoftware.co.ke")
 
     signing_url = f"{frontend_url}/sign/{token}"
 

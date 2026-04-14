@@ -42,7 +42,7 @@ SMTP_FROM_NAME = (
 )
 FRONTEND_URL = (
     os.environ.get("FRONTEND_URL")
-    or "https://www.propertechsoftware.com"
+    or "https://propertechsoftware.co.ke"
 )
 
 # Lazy-load from pydantic settings as fallback if env vars are empty
@@ -61,7 +61,7 @@ def _load_from_settings() -> None:
             SMTP_FROM_EMAIL = settings.SMTP_FROM_EMAIL or SMTP_USER
         if SMTP_FROM_NAME == "ProperTech Software" and settings.SMTP_FROM_NAME:
             SMTP_FROM_NAME = settings.SMTP_FROM_NAME
-        if FRONTEND_URL == "https://www.propertechsoftware.com" and settings.FRONTEND_URL:
+        if FRONTEND_URL == "https://propertechsoftware.co.ke" and settings.FRONTEND_URL:
             FRONTEND_URL = settings.FRONTEND_URL
     except Exception:
         pass
@@ -254,6 +254,74 @@ def send_welcome_email(to_email: str, user_name: str = "") -> bool:
     return send_email(
         to_email=to_email,
         subject="Welcome to PROPERTECH — your account is active!",
+        html_content=html_content,
+    )
+
+
+def send_password_reset_email(to_email: str, token: str) -> bool:
+    """Send a password reset email with a 1-hour expiry link."""
+    _load_from_settings()
+    reset_url = f"{FRONTEND_URL.rstrip('/')}/reset-password?token={token}"
+
+    html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reset your PROPERTECH password</title>
+</head>
+<body style="margin:0;padding:0;background:#f0f4ff;font-family:Arial,Helvetica,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4ff;padding:40px 0;">
+    <tr>
+      <td align="center">
+        <table width="560" cellpadding="0" cellspacing="0"
+               style="background:#ffffff;border-radius:12px;overflow:hidden;
+                      box-shadow:0 4px 20px rgba(0,0,0,0.08);">
+          <tr>
+            <td style="background:#2563eb;padding:32px;text-align:center;">
+              <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:700;">PROPERTECH</h1>
+              <p style="margin:4px 0 0;color:rgba(255,255,255,0.75);font-size:13px;">Property Management Platform</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:40px 40px 32px;">
+              <h2 style="margin:0 0 12px;color:#111827;font-size:20px;font-weight:700;">Reset your password</h2>
+              <p style="margin:0 0 24px;color:#6b7280;font-size:15px;line-height:1.6;">
+                We received a request to reset your password. Click the button below to set a new password.
+                If you did not request this, please ignore this email — your password will remain unchanged.
+              </p>
+              <div style="text-align:center;margin:32px 0;">
+                <a href="{reset_url}"
+                   style="display:inline-block;background:#2563eb;color:#ffffff;
+                          font-size:15px;font-weight:600;padding:14px 36px;
+                          border-radius:8px;text-decoration:none;">
+                  Reset My Password
+                </a>
+              </div>
+              <p style="margin:0 0 8px;color:#6b7280;font-size:13px;">Or copy and paste this link into your browser:</p>
+              <p style="margin:0;color:#6366f1;font-size:13px;word-break:break-all;">{reset_url}</p>
+              <p style="margin:24px 0 0;color:#9ca3af;font-size:13px;text-align:center;">
+                This link expires in <strong>1 hour</strong>.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background:#f9fafb;padding:20px 40px;border-top:1px solid #e5e7eb;">
+              <p style="margin:0;color:#9ca3af;font-size:12px;text-align:center;">
+                &copy; 2026 ProperTech Software. All rights reserved.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
+
+    return send_email(
+        to_email=to_email,
+        subject="Reset your PROPERTECH password",
         html_content=html_content,
     )
 

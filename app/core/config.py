@@ -47,14 +47,17 @@ class Settings(BaseSettings):
         return v
 
     # ==================== CORS & Frontend ====================
-    FRONTEND_URL: str = "https://propertechsoftware.com"
-    BACKEND_API_URL: str = "https://api.propertechsoftware.com"
+    FRONTEND_URL: str = "https://propertechsoftware.co.ke"
+    BACKEND_API_URL: str = "https://api.propertechsoftware.co.ke"
     ALLOWED_ORIGINS: List[str] = [
         "http://localhost:3000",
         "http://localhost:3001",
         "http://localhost:3002",
+        "https://propertechsoftware.co.ke",
+        "https://www.propertechsoftware.co.ke",
         "https://propertechsoftware.com",
         "https://www.propertechsoftware.com",
+        "https://api.propertechsoftware.co.ke",
         "https://api.propertechsoftware.com",
     ]
     

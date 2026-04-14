@@ -338,6 +338,16 @@ def _run_blocking_startup():
                 db.commit()
                 logger.info("[OK] Properties.area column ensured")
 
+                # Ensure password-reset token columns exist on users table
+                try:
+                    db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_token VARCHAR(255)"))
+                    db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_token_expires_at TIMESTAMP"))
+                    db.commit()
+                    logger.info("[OK] users password_reset columns ensured")
+                except Exception as pr_col_err:
+                    logger.warning(f"[WARN] password_reset column fix: {pr_col_err}")
+                    db.rollback()
+
                 # Ensure all unit columns exist (added in later iterations of the model)
                 try:
                     db.execute(text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS occupancy_type VARCHAR(20) DEFAULT 'renting'"))

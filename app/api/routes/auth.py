@@ -294,14 +294,111 @@ async def get_current_user_info(current_user: User = Depends(get_current_user)):
     }
 
 
+class ForgotPasswordBody(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordBody(BaseModel):
+    token: str
+    new_password: str
+
+
+# Rate limit for forgot-password (max 3 per hour per email)
+_forgot_rate_limit: dict[str, list[datetime]] = {}
+
+
+def _check_forgot_rate_limit(email: str) -> None:
+    now = datetime.utcnow()
+    window_start = now - timedelta(hours=1)
+    timestamps = [t for t in _forgot_rate_limit.get(email, []) if t > window_start]
+    if len(timestamps) >= 3:
+        raise HTTPException(status_code=429, detail="Too many requests. Please wait before trying again.")
+    timestamps.append(now)
+    _forgot_rate_limit[email] = timestamps
+
+
 @router.post("/forgot-password")
-def forgot_password(email: str, db: Session = Depends(get_db)):
-    """Request password reset. Always returns success to prevent email enumeration."""
-    # In production, send email with reset link if user exists
+def forgot_password(body: ForgotPasswordBody, db: Session = Depends(get_db)):
+    """Send a password reset email. Always returns success to prevent email enumeration."""
+    email_lower = body.email.lower()
+    try:
+        _check_forgot_rate_limit(email_lower)
+    except HTTPException:
+        raise
+
+    user = db.query(User).filter(User.email == email_lower).first()
+
+    if user:
+        reset_token = secrets.token_urlsafe(32)
+        token_expires = datetime.utcnow() + timedelta(hours=1)
+
+        # Store token on user (startup SQL ensures these columns exist)
+        try:
+            from sqlalchemy import text
+            db.execute(
+                text("UPDATE users SET password_reset_token = :token, password_reset_token_expires_at = :exp WHERE id = :uid"),
+                {"token": reset_token, "exp": token_expires, "uid": str(user.id)},
+            )
+            db.commit()
+        except Exception as e:
+            logger.error("[forgot_password] Could not store reset token: %s", e)
+            db.rollback()
+        else:
+            try:
+                from app.services.email_service import send_password_reset_email
+                send_password_reset_email(user.email, reset_token)
+            except Exception as mail_err:
+                logger.error("[forgot_password] Email send failed for %s: %s", user.email, mail_err)
+
     return {
         "success": True,
         "message": "If an account with this email exists, a password reset link has been sent.",
     }
+
+
+@router.post("/reset-password")
+def reset_password(body: ResetPasswordBody, db: Session = Depends(get_db)):
+    """Reset user password using the token from the reset email."""
+    if not body.token:
+        raise HTTPException(status_code=400, detail="Reset token is required")
+
+    validate_password_strength(body.new_password)
+
+    try:
+        from sqlalchemy import text
+        result = db.execute(
+            text("SELECT id, email, password_reset_token_expires_at FROM users WHERE password_reset_token = :token"),
+            {"token": body.token},
+        )
+        row = result.fetchone()
+    except Exception as e:
+        logger.error("[reset_password] DB error: %s", e)
+        raise HTTPException(status_code=500, detail="Database error")
+
+    if not row:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+
+    expires_at = row[2]
+    if expires_at is None or datetime.utcnow() > expires_at:
+        raise HTTPException(status_code=400, detail="Reset token has expired. Please request a new one.")
+
+    user = db.query(User).filter(User.id == row[0]).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid reset token")
+
+    user.hashed_password = get_password_hash(body.new_password)
+    try:
+        db.execute(
+            text("UPDATE users SET password_reset_token = NULL, password_reset_token_expires_at = NULL WHERE id = :uid"),
+            {"uid": str(user.id)},
+        )
+        db.commit()
+    except Exception as e:
+        logger.error("[reset_password] Could not clear reset token: %s", e)
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to update password")
+
+    return {"success": True, "message": "Password reset successfully. You can now log in."}
 
 
 @router.get("/verify-token")
